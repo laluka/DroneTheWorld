@@ -88,7 +88,7 @@ export class Hud {
       e.lng.textContent = (s.lng >= 0 ? 'E ' : 'W ') + Math.abs(s.lng).toFixed(5);
       const t = Math.floor(s.flightTime);
       e.clock.textContent = `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
-      e.mode.textContent = s.boost ? 'TURBO' : 'ACRO';
+      e.mode.textContent = (s.boost ? 'TURBO ' : '') + s.mode.toUpperCase();
       e.mode.classList.toggle('sport', s.boost);
       e.fps.textContent = `${this.fps} FPS`;
       e.bat.textContent = `${Math.round(s.battery)}%`;

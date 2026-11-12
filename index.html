@@ -98,6 +98,14 @@
         <div class="section-title">Presets</div>
         <div id="presets" class="presets"></div>
 
+        <div class="section-title">Flight mode</div>
+        <div class="seg" id="mode-seg">
+          <button data-mode="angle" class="active">Angle</button>
+          <button data-mode="acro">Acro</button>
+          <button data-mode="cine">Cine</button>
+        </div>
+        <p class="opt-note" id="mode-hint"></p>
+
         <div class="options">
           <div class="opt wide">
             <div class="section-title">Map</div>
@@ -107,7 +115,7 @@
               <button data-style="night">Night</button>
               <button data-style="photoreal" class="pro">Photoreal 3D</button>
             </div>
-            <div class="key-hint"><button id="key-toggle" class="linkish">Photoreal 3D uses Google's photorealistic tiles · <span id="key-badge">key required</span></button></div>
+            <div class="key-hint">Satellite, Streets and Night are free and need nothing. <button id="key-toggle" class="linkish">Photoreal 3D is optional and uses your own Google key · <span id="key-badge">key required</span></button></div>
           </div>
           <div class="opt">
             <div class="section-title">Sound <small>(off by default)</small></div>
@@ -116,7 +124,7 @@
                 <button data-sound="off" class="active">Off</button>
                 <button data-sound="on">On</button>
               </div>
-              <label id="volume-wrap" class="volume disabled"><span>VOL</span><input id="volume" type="range" min="0" max="100" value="40" /></label>
+              <label id="volume-wrap" class="volume disabled"><span>VOL</span><input id="volume" type="range" min="0" max="100" value="60" /></label>
             </div>
           </div>
           <div class="opt">
@@ -152,9 +160,22 @@
         </div>
 
         <div id="key-row" class="key-row hidden">
-          <input id="gkey" type="password" placeholder="Google Maps Platform API key (Map Tiles API enabled)" autocomplete="off" spellcheck="false" />
+          <input id="gkey" type="password" placeholder="Paste your Google Maps Platform API key" autocomplete="off" spellcheck="false" />
           <button id="key-save">USE KEY</button>
-          <p>Stored only in this browser. Create a key in <a href="https://console.cloud.google.com/google/maps-apis" target="_blank" rel="noopener">Google Cloud</a>, enable the <b>Map Tiles API</b>, and restrict it to this site's URL. Free monthly credit applies.</p>
+          <p>Your key stays in this browser only (local storage). It is sent to Google and nowhere else.</p>
+          <details class="guide" open>
+            <summary>Get a key in about 10 minutes</summary>
+            <ol>
+              <li>Open <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">Google Cloud</a> and create a project.</li>
+              <li>Attach a <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener">billing account</a>. Google asks for a card even though light use stays within the monthly free allowance.</li>
+              <li>Enable the <a href="https://console.cloud.google.com/apis/library/tile.googleapis.com" target="_blank" rel="noopener">Map Tiles API</a> for that project.</li>
+              <li>In <a href="https://console.cloud.google.com/google/maps-apis/credentials" target="_blank" rel="noopener">Keys &amp; Credentials</a>, create an API key.</li>
+              <li>Restrict it. Under <b>Application restrictions</b> pick <b>Websites</b> and add <code id="key-origin">https://laluka.github.io/*</code>. Under <b>API restrictions</b> allow only <b>Map Tiles API</b>.</li>
+              <li>Optional but wise: in <a href="https://console.cloud.google.com/apis/api/tile.googleapis.com/quotas" target="_blank" rel="noopener">Quotas</a>, cap daily requests, and set a budget alert in Billing.</li>
+              <li>Paste the key above and press <b>Use key</b>. Fly somewhere with tall buildings and enjoy.</li>
+            </ol>
+            <p class="guide-note">Usage beyond the free allowance is billed by Google per session. Check the current <a href="https://developers.google.com/maps/billing-and-pricing/pricing" target="_blank" rel="noopener">pricing</a>.</p>
+          </details>
           <p id="key-error" class="err"></p>
         </div>
         <div class="actions">
@@ -168,9 +189,10 @@
             <div><kbd>W</kbd><kbd>S</kbd> or <kbd>↑</kbd><kbd>↓</kbd> <em>pitch (forward / back)</em></div>
             <div><kbd>A</kbd><kbd>D</kbd> or <kbd>←</kbd><kbd>→</kbd> <em>roll (strafe)</em></div>
             <div><kbd>Q</kbd><kbd>E</kbd> <em>yaw</em></div>
-            <div><kbd>Space</kbd> / <kbd>C</kbd> <em>throttle up / down</em></div>
+            <div><kbd>Space</kbd> / <kbd>C</kbd> <em>throttle up / down (released = hover)</em></div>
             <div><kbd>Shift</kbd> <em>turbo</em></div>
-            <div><kbd>Mouse drag</kbd> <em>yaw + camera tilt</em></div>
+            <div><kbd>V</kbd> <em>flight mode: angle / acro / cine</em></div>
+            <div><kbd>Mouse drag</kbd> <em>yaw + camera uptilt</em></div>
             <div><kbd>Wheel</kbd> <em>altitude</em></div>
             <div><kbd>I</kbd><kbd>K</kbd> <em>camera tilt</em></div>
             <div><kbd>R</kbd> <em>reset camera</em></div>

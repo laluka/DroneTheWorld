@@ -16,6 +16,17 @@ Pure frontend, no backend, no account: a static site that runs on GitHub Pages.
 - Search any place (Photon geocoder), 16 curated presets, random mode, shareable URLs
   (`#lng,lat,agl,heading,camTilt,style`), screenshots with the OSD baked in.
 
+## Flight modes (`V` to cycle)
+
+- **Angle** (default): sticks tilt the quad, it levels itself when released. Real thrust, gravity and momentum;
+  centred throttle holds altitude. Best on keyboard.
+- **Acro**: sticks command rotation rates (Betaflight-style rates and expo); the quad keeps its attitude.
+  Bank and pull to carve turns, barrel rolls work. Centred throttle = hover thrust, so it suits spring-centred
+  RC sticks (DJI remotes). The map renderer can't look above the horizon, so forward/back flips are not possible.
+- **Cine**: smooth assisted flight for sightseeing.
+
+The FPV camera is tilted up on the frame (20° by default, mouse drag up/down to change).
+
 ## Controls
 
 | Input | Action |
@@ -57,18 +68,33 @@ After that, every push to `main` runs `.github/workflows/deploy.yml`, which buil
 `https://<user>.github.io/<repo>/`. The build uses a relative base, so it works from that sub-path.
 You can also re-run it by hand from the **Actions** tab (workflow "Deploy to GitHub Pages" → *Run workflow*).
 
-## Photoreal 3D (Google key)
+## Photoreal 3D (optional, bring your own Google key)
 
-Google's photorealistic tiles are the only way to get precise, textured 3D worldwide, and they require an API key.
-Two ways to provide one:
+**No key is needed to play.** Satellite, Streets and Night, the buildings, collision and discoveries all work
+out of the box. A key only unlocks the extra *Photoreal 3D* view (Google Photorealistic 3D Tiles via CesiumJS).
 
-- **Per visitor** — paste a key in the menu (Map → Photoreal 3D). It is stored only in that browser's `localStorage`.
-- **Baked into the site** — add a repository secret `VITE_GOOGLE_MAPS_KEY`; the workflow injects it at build time
-  so every visitor gets Photoreal 3D directly.
+The public site ships without a key. Players who want Photoreal 3D paste their own in the menu
+(Map → Photoreal 3D). It is kept in that browser's local storage and only sent to Google.
 
-Create the key in [Google Cloud → Maps Platform](https://console.cloud.google.com/google/maps-apis), enable the
-**Map Tiles API**, and restrict the key by HTTP referrer to your Pages URL (and by API to Map Tiles only).
-Google offers a monthly free credit; 3D Tiles usage is billed per root-tile request beyond it, so keep the referrer restriction.
+Getting a key takes about 10 minutes:
+
+1. Create a project in [Google Cloud](https://console.cloud.google.com/projectcreate).
+2. Attach a [billing account](https://console.cloud.google.com/billing). A card is required even though light use
+   stays within Google's monthly free allowance.
+3. Enable the [Map Tiles API](https://console.cloud.google.com/apis/library/tile.googleapis.com).
+4. Create an API key in [Keys & Credentials](https://console.cloud.google.com/google/maps-apis/credentials).
+5. Restrict it: *Websites* → the site's origin (for example `https://laluka.github.io/*`, or
+   `http://localhost:5173/*` for local dev), and *API restrictions* → Map Tiles API only.
+6. Optional but wise: cap daily requests in [Quotas](https://console.cloud.google.com/apis/api/tile.googleapis.com/quotas)
+   and add a budget alert.
+7. Paste it in the menu and press **Use key**.
+
+Usage beyond the free allowance is billed by Google per session; see their current
+[pricing](https://developers.google.com/maps/billing-and-pricing/pricing).
+
+Self-hosting a fork for others? You can bake a key in at build time with the repository secret
+`VITE_GOOGLE_MAPS_KEY` (read by the Pages workflow). Anyone can read a key shipped in a public site,
+so only do this with strict referrer and quota limits.
 
 ## Data & credits
 

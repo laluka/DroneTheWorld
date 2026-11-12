@@ -1,7 +1,7 @@
 import './style.css';
 import { PRESETS, RANDOM_POOL, GRADS, type Place } from './config';
 import { STYLE_IDS, type StyleId } from './mapstyle';
-import { Drone } from './drone';
+import { Drone, FLIGHT_MODES, type FlightMode } from './drone';
 import { Input } from './input';
 import { Hud } from './hud';
 import { DroneAudio } from './audio';
@@ -17,9 +17,9 @@ export type ViewId = StyleId | 'photoreal';
 const VIEW_IDS: ViewId[] = [...STYLE_IDS, 'photoreal'];
 
 // ---------- settings (persisted) ----------
-interface Settings { v: number; style: ViewId; sound: boolean; volume: number; quality: 'high' | 'low'; googleKey: string; keyRates: number; }
+interface Settings { v: number; flightMode: FlightMode; style: ViewId; sound: boolean; volume: number; quality: 'high' | 'low'; googleKey: string; keyRates: number; }
 const SETTINGS_VERSION = 2;
-const DEFAULTS: Settings = { v: SETTINGS_VERSION, style: 'satellite', sound: false, volume: 0.4, quality: 'high', googleKey: '', keyRates: 1 };
+const DEFAULTS: Settings = { v: SETTINGS_VERSION, flightMode: 'angle', style: 'satellite', sound: false, volume: 0.6, quality: 'high', googleKey: '', keyRates: 1 };
 const settings: Settings = (() => {
   let saved: Partial<Settings> = {};
   try { saved = JSON.parse(localStorage.getItem('drone.settings') || '{}'); } catch { /* ignore */ }
@@ -137,7 +137,7 @@ function frame(now: number) {
   }
   engine.setCamera(drone.s);
   hud.update(drone.s, dt, now);
-  if (settings.sound) audio.update(drone.s.motor, Math.min(1, Math.hypot(drone.s.vE, drone.s.vN) / 45), drone.s.boost);
+  if (settings.sound) audio.update(drone.s, Math.min(1, Math.hypot(drone.s.vE, drone.s.vN, drone.s.vU) / 45));
 
   const moved = Math.hypot((drone.s.lng - lastReverse.lng) * 111_000 * Math.cos(drone.s.lat * Math.PI / 180), (drone.s.lat - lastReverse.lat) * 111_000);
   if (now - lastReverse.t > 9000 && moved > 600) {
@@ -323,6 +323,7 @@ $('volume-wrap').classList.toggle('disabled', !settings.sound);
 
 // Google key input
 const keyEl = $('gkey') as HTMLInputElement;
+$('key-origin').textContent = `${location.origin}/*`;
 keyEl.value = settings.googleKey;
 $('key-save').addEventListener('click', async () => {
   settings.googleKey = keyEl.value.trim(); saveSettings();
@@ -346,6 +347,22 @@ function setView(v: ViewId) {
   });
 }
 syncSeg();
+
+// ---------- flight mode ----------
+const MODE_HINT: Record<FlightMode, string> = {
+  angle: 'Sticks tilt the quad and it levels itself. Real momentum and gravity; centred throttle holds height.',
+  acro: 'Sticks set rotation rates and the quad keeps its attitude. Bank and pull to turn. Centred throttle = hover thrust.',
+  cine: 'Smooth, assisted flying for sightseeing.',
+};
+function setFlightMode(m: FlightMode, toast = true) {
+  settings.flightMode = m; saveSettings();
+  drone.setMode(m);
+  $('mode-seg').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.mode === m));
+  $('mode-hint').textContent = MODE_HINT[m];
+  if (toast) hud.toast(`${m.toUpperCase()} MODE`);
+}
+$('mode-seg').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => setFlightMode(b.dataset.mode as FlightMode)));
+setFlightMode(settings.flightMode, false);
 
 // ---------- discoveries ----------
 const card = $('discovery');
@@ -497,6 +514,7 @@ input.onKey = (code, ev) => {
   switch (code) {
     case 'KeyM': setView(VIEW_IDS[(VIEW_IDS.indexOf(settings.style) + 1) % (googleKey() ? VIEW_IDS.length : STYLE_IDS.length)]); break;
     case 'KeyH': hud.toggle(); break;
+    case 'KeyV': setFlightMode(FLIGHT_MODES[(FLIGHT_MODES.indexOf(settings.flightMode) + 1) % FLIGHT_MODES.length]); break;
     case 'KeyR': drone.levelCamera(); hud.toast('CAMERA RESET'); break;
     case 'Backspace': if (lastPlace) { ev.preventDefault(); flyTo(lastPlace); } break;
     case 'KeyF': toggleFullscreen(); break;

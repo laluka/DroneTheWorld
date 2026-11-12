@@ -282,3 +282,11 @@ kbd { font: 600 11px var(--font-mono); padding: 2px 6px; border-radius: 5px; bac
   #discovery h3 { font-size: 18px; }
   .hud-found { top: calc(104px + var(--safe-t)); }
 }
+
+.guide { grid-column: 1 / -1; font-size: 13px; color: var(--fg); }
+.guide summary { cursor: pointer; font-weight: 600; letter-spacing: 0.04em; color: var(--accent-2); }
+.guide ol { margin: 10px 0 6px; padding-left: 20px; line-height: 1.55; }
+.guide li { margin: 4px 0; }
+.guide a { color: var(--accent-2); }
+.guide code { font: 500 12px var(--font-mono); background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 4px; user-select: all; }
+.guide-note { color: var(--dim) !important; }
