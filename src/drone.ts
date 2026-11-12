@@ -186,16 +186,22 @@ export class Drone {
     if (this.s.mode !== 'cine') this.q = qFromEuler(eulerOf(this.q).heading, 0, 0);
   }
 
-  /** Floor under a point for the current altitude: a roof if we are above it, else terrain. */
+  /** Floor under a point for the current altitude: the highest roof at or below us, else terrain. */
   private floorOf(sf: Surface | null, alt: number): number | null {
     if (!sf) return null;
-    if (sf.solid && alt >= sf.solid.top - 1.5) return sf.solid.top;
-    return sf.ground;
+    let f = sf.ground;
+    for (const v of sf.solids ?? []) if (alt >= v.top - 1.5 && v.top > f) f = v.top;
+    return f;
   }
 
-  /** True when a point would put the drone inside a solid volume at this altitude. */
+  /** The solid volume that would contain the drone at this altitude, if any. */
+  private inside(sf: Surface | null, alt: number) {
+    for (const v of sf?.solids ?? []) if (alt > v.base - 0.5 && alt < v.top - 0.3) return v;
+    return null;
+  }
+
   private blocked(sf: Surface | null, alt: number) {
-    return !!sf?.solid && alt > sf.solid.base - 0.5 && alt < sf.solid.top - 0.3;
+    return this.inside(sf, alt) !== null;
   }
 
   private hit(strength: number, now: number) {
@@ -264,9 +270,10 @@ export class Drone {
     // --- floor & ceiling ---
     const after = probe ? probe(s.lng, s.lat) : null;
     if (after) s.ground = after.ground;
-    if (this.blocked(after, s.alt)) {
+    const stuck = this.inside(after, s.alt);
+    if (stuck) {
       // Spawned or streamed into a building: rise out of it quickly.
-      s.alt += Math.min(after!.solid!.top + TUNE.minAGL - s.alt, Math.max(4, (after!.solid!.top - s.alt) * 6) * dt);
+      s.alt += Math.min(stuck.top + TUNE.minAGL - s.alt, Math.max(4, (stuck.top - s.alt) * 6) * dt);
       if (s.vU < 0) s.vU = 0;
     }
     s.floor = this.floorOf(after, s.alt) ?? s.floor;

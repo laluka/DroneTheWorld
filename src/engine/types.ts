@@ -3,8 +3,8 @@ import type { DroneState } from '../drone';
 /** What is under / around a point: ground level plus any solid volume above it (all heights MSL, meters). */
 export interface Surface {
   ground: number;
-  /** solid volume [base, top] above ground, e.g. a building; absent on open ground */
-  solid?: { base: number; top: number };
+  /** solid volumes [base, top] (MSL) stacked at this point, e.g. building parts; absent on open ground */
+  solids?: { base: number; top: number }[];
 }
 
 export interface Engine {

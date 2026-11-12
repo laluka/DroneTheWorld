@@ -117,7 +117,7 @@ export class MapLibreEngine implements Engine {
     if (t === null || !Number.isFinite(t)) return null;
     this.buildings.prefetch(lng, lat);
     const b = this.buildings.at(lng, lat);
-    return b ? { ground: t, solid: { base: t + b.base, top: t + b.top } } : { ground: t };
+    return b ? { ground: t, solids: b.map((v) => ({ base: t + v.base, top: t + v.top })) } : { ground: t };
   }
 
   tilesLoaded() { return this.map.areTilesLoaded(); }

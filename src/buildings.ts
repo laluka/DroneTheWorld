@@ -63,10 +63,10 @@ export class BuildingField {
   }
 
   /**
-   * The tallest building volume covering a point, as heights above local ground, or null when open ground.
-   * Returns undefined while the tile is still loading.
+   * Every building volume covering a point (OSM buildings are often stacked parts: legs, floors, spires),
+   * as heights above local ground. null on open ground, undefined while the tile is still loading.
    */
-  at(lng: number, lat: number): { base: number; top: number } | null | undefined {
+  at(lng: number, lat: number): { base: number; top: number }[] | null | undefined {
     const { x, y } = tileXY(lng, lat);
     const tx = Math.floor(x), ty = Math.floor(y);
     const t = this.tiles.get(`${tx}/${ty}`);
@@ -75,14 +75,13 @@ export class BuildingField {
     const px = (x - tx) * t.extent, py = (y - ty) * t.extent;
     const gx = Math.min(GRID - 1, Math.max(0, Math.floor((px / t.extent) * GRID)));
     const gy = Math.min(GRID - 1, Math.max(0, Math.floor((py / t.extent) * GRID)));
-    let best: Footprint | null = null;
+    let out: { base: number; top: number }[] | null = null;
     for (const i of t.grid[gy * GRID + gx]) {
       const f = t.items[i];
       if (px < f.minX || px > f.maxX || py < f.minY || py > f.maxY) continue;
-      if (best && f.height <= best.height) continue;
-      if (inside(f.rings, px, py)) best = f;
+      if (inside(f.rings, px, py)) (out ??= []).push({ base: f.base, top: f.height });
     }
-    return best ? { base: best.base, top: best.height } : null;
+    return out;
   }
 }
 
