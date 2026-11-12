@@ -148,7 +148,7 @@ export async function buildStyle(id: StyleId, quality: 'high' | 'low'): Promise<
 
   const base = await fetchStyle(id === 'streets' ? 'liberty' : 'dark');
   // Keep only big place names and water names: street labels, shields and POIs balloon at FPV pitch and clutter the view.
-  const KEEP_SYMBOL = /^(label_(town|state|city|city_capital|country_\d)|place_(town|city|city_large|state|country_\w+)|water_name(_point_label)?)$/;
+  const KEEP_SYMBOL = /^(label_(town|state|city|city_capital|country_\d)|place_(town|city|city_large|state|country_\w+))$/;
   const layers = base.layers.filter((l) => {
     if (l['source-layer' as keyof typeof l] === 'building' || l.id.startsWith('building')) return false;
     if (l.type === 'symbol') return KEEP_SYMBOL.test(l.id);
