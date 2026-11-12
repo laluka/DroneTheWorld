@@ -24,6 +24,7 @@ Pure frontend, no backend, no account: a static site that runs on GitHub Pages.
 | `Shift` | turbo |
 | mouse drag | yaw + camera tilt · wheel: altitude |
 | `I` `K` / `R` | camera tilt / reset |
+| `Backspace` | back to the launch point |
 | `M` `H` `N` `P` `F` | cycle map · toggle HUD · sound · screenshot · fullscreen |
 | `1`–`9` | jump to preset · `Esc` menu |
 
@@ -34,6 +35,8 @@ pitch forward, roll right, and press a turbo button. Axis order and direction ar
 with adjustable deadzone and expo. The OSD shows `RC` when the controller is driving.
 
 Keyboard is the fallback: keys ramp in and out like a stick, and the **Rates** slider scales yaw and throttle.
+Buildings are solid: the drone bounces off walls (with a shake and a red flash), slides along them, and can land on roofs.
+In Photoreal 3D the sampled surface acts as the floor, so the drone climbs over buildings instead of bouncing.
 The higher you fly, the faster you go (altitude speed scaling), so crossing a continent stays fun.
 
 ## Run it

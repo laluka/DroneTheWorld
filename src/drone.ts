@@ -1,12 +1,21 @@
 import type { Controls } from './input';
+import type { Surface } from './engine/types';
+
+export type Probe = (lng: number, lat: number) => Surface | null;
 
 export interface DroneState {
   lng: number;
   lat: number;
   /** altitude above mean sea level, meters */
   alt: number;
-  /** ground elevation under the drone (MSL), meters */
+  /** terrain elevation under the drone (MSL), meters */
   ground: number;
+  /** what the drone would land on: terrain, or a roof when flying above one */
+  floor: number;
+  /** 0..1 impact strength of the latest collision, decays over time */
+  impact: number;
+  /** increments on every collision so the UI can react once */
+  impacts: number;
   heading: number;
   /** camera neutral tilt (MapLibre pitch convention: 0 = straight down, 90 = horizon). FPV cam uptilt. */
   camTilt: number;
@@ -54,6 +63,7 @@ const TUNE = {
   camTiltMin: 25,
   camTiltMax: 86,
   minAGL: 1.5,
+  bodyRadius: 2.5,
   maxAGL: 18000,
   pitchGain: 16,      // body nose-down at full forward stick
   pitchGainBoost: 24,
@@ -66,7 +76,7 @@ const deg = Math.PI / 180;
 
 export class Drone {
   s: DroneState = {
-    lng: 2.3015, lat: 48.8515, alt: 250, ground: 0, heading: 325, camTilt: 84, camPitch: 84, roll: 0, bodyPitch: 0,
+    lng: 2.3015, lat: 48.8515, alt: 250, ground: 0, floor: 0, impact: 0, impacts: 0, heading: 325, camTilt: 84, camPitch: 84, roll: 0, bodyPitch: 0,
     vE: 0, vN: 0, vU: 0, groundSpeed: 0, scale: 1, boost: false, motor: 0, distance: 0, flightTime: 0, battery: 100,
     stick: { pitch: 0, roll: 0, yaw: 0, throttle: 0 },
   };
@@ -74,6 +84,7 @@ export class Drone {
   private settleUntil = 0;
   private targetAGL = 200;
   private camTiltMax = TUNE.camTiltMax;
+  private lastImpactT = 0;
 
   /** Renderer-dependent: MapLibre can't look above the horizon, Cesium can. */
   setCamLimits(maxTilt: number) {
@@ -83,7 +94,7 @@ export class Drone {
 
   /** Keep the current height above ground while the vertical datum / terrain source changes. */
   holdAGL() {
-    this.targetAGL = Math.max(2, this.s.alt - this.s.ground);
+    this.targetAGL = Math.max(2, this.s.alt - this.s.floor);
     this.settleUntil = performance.now() + 2500;
   }
 
@@ -93,6 +104,8 @@ export class Drone {
     s.lng = lng; s.lat = lat; s.heading = heading; s.camTilt = camTilt; s.camPitch = camTilt;
     s.vE = s.vN = s.vU = 0; s.roll = 0; s.bodyPitch = 0; this.yawVel = 0;
     s.ground = 0;
+    s.floor = 0;
+    s.impact = 0;
     s.alt = agl;
     this.targetAGL = agl;
     this.settleUntil = performance.now() + 3500;
@@ -100,18 +113,31 @@ export class Drone {
 
   levelCamera() { this.s.camTilt = 84; }
 
-  step(dt: number, c: Controls, groundElev: number | null, now: number) {
+  /** Floor under a point for the current altitude: a roof if we are above it, else terrain. */
+  private floorOf(sf: Surface | null, alt: number): number | null {
+    if (!sf) return null;
+    if (sf.solid && alt >= sf.solid.top - 1.5) return sf.solid.top;
+    return sf.ground;
+  }
+
+  /** True when a point would put the drone inside a solid volume at this altitude. */
+  private blocked(sf: Surface | null, alt: number) {
+    return !!sf?.solid && alt > sf.solid.base - 0.5 && alt < sf.solid.top - 0.3;
+  }
+
+  step(dt: number, c: Controls, probe: Probe | null, now: number) {
     const s = this.s;
     dt = Math.min(dt, 0.05);
-    if (groundElev !== null && Number.isFinite(groundElev)) s.ground = groundElev;
+    const here = probe ? probe(s.lng, s.lat) : null;
+    if (here) { s.ground = here.ground; s.floor = this.floorOf(here, s.alt) ?? s.ground; }
 
-    // Settle phase after a teleport: keep requested AGL while DEM tiles stream in.
+    // Settle phase after a teleport: keep requested height above the floor while data streams in.
     if (now < this.settleUntil) {
-      const want = s.ground + this.targetAGL;
+      const want = s.floor + this.targetAGL;
       if (Math.abs(s.alt - want) > 0.5) s.alt += (want - s.alt) * Math.min(1, dt * 6);
     }
 
-    const agl = Math.max(0, s.alt - s.ground);
+    const agl = Math.max(0, s.alt - s.floor);
     const boost = c.boost;
     s.boost = boost;
     s.stick = { pitch: c.pitch, roll: c.roll, yaw: c.yaw, throttle: c.throttle };
@@ -157,16 +183,55 @@ export class Drone {
     const mPerDegLat = 111_132;
     const mPerDegLng = 111_320 * Math.max(0.05, Math.cos(s.lat * deg));
     const vScale = Math.min(60, Math.max(1, agl / 150));
-    s.lng += (s.vE * scale * dt) / mPerDegLng;
-    s.lat += (s.vN * scale * dt) / mPerDegLat;
+    const dE = s.vE * scale * dt, dN = s.vN * scale * dt;
     s.alt += s.vU * vScale * dt;
+
+    // --- building collision: probe a little ahead of the camera, slide along walls, bounce on impact ---
+    const insideNow = this.blocked(here, s.alt);
+    const step = Math.hypot(dE, dN);
+    let moveE = dE, moveN = dN;
+    if (probe && step > 1e-4 && !insideNow) {
+      const ahead = (e: number, n: number) => {
+        const len = Math.hypot(e, n) || 1;
+        const r = TUNE.bodyRadius;
+        return probe(s.lng + (e + (e / len) * r) / mPerDegLng, s.lat + (n + (n / len) * r) / mPerDegLat);
+      };
+      if (this.blocked(ahead(dE, dN), s.alt)) {
+        const hitSpeed = Math.hypot(s.vE, s.vN) * scale;
+        // try sliding along one axis
+        if (Math.abs(dE) > 1e-4 && !this.blocked(ahead(dE, 0), s.alt)) { moveN = 0; s.vN *= -0.2; }
+        else if (Math.abs(dN) > 1e-4 && !this.blocked(ahead(0, dN), s.alt)) { moveE = 0; s.vE *= -0.2; }
+        else { moveE = moveN = 0; s.vE *= -0.35; s.vN *= -0.35; }
+        if (hitSpeed > 2.5 && now - this.lastImpactT > 350) {
+          this.lastImpactT = now;
+          s.impact = Math.min(1, Math.max(s.impact, hitSpeed / 25));
+          s.impacts++;
+          s.battery = Math.max(3, s.battery - Math.min(4, hitSpeed / 10));
+        }
+      }
+    }
+    s.lng += moveE / mPerDegLng;
+    s.lat += moveN / mPerDegLat;
     if (s.lng > 180) s.lng -= 360;
     if (s.lng < -180) s.lng += 360;
     s.lat = Math.max(-84, Math.min(84, s.lat));
 
-    // --- ground & ceiling ---
-    const minAlt = s.ground + TUNE.minAGL;
-    if (s.alt < minAlt) { s.alt = minAlt; if (s.vU < 0) s.vU = 0; }
+    // --- floor & ceiling ---
+    const after = probe ? probe(s.lng, s.lat) : null;
+    if (after) { s.ground = after.ground; }
+    if (this.blocked(after, s.alt)) {
+      // Spawned or streamed into a building: rise out of it quickly.
+      s.alt += Math.min(after!.solid!.top + TUNE.minAGL - s.alt, Math.max(4, (after!.solid!.top - s.alt) * 6) * dt);
+      if (s.vU < 0) s.vU = 0;
+    }
+    s.floor = this.floorOf(after, s.alt) ?? s.floor;
+    const minAlt = s.floor + TUNE.minAGL;
+    if (s.alt < s.floor) { s.alt = s.floor; }
+    if (s.alt < minAlt) {
+      // Soft landing: ease up instead of snapping when terrain detail streams in.
+      s.alt += (minAlt - s.alt) * Math.min(1, dt * 12);
+      if (s.vU < 0) s.vU = 0;
+    }
     const maxAlt = s.ground + TUNE.maxAGL;
     if (s.alt > maxAlt) { s.alt = maxAlt; if (s.vU > 0) s.vU = 0; }
 
@@ -176,7 +241,10 @@ export class Drone {
     s.bodyPitch += (pitchTarget - s.bodyPitch) * k;
     const bankTarget = c.roll * TUNE.rollGain + this.yawVel * TUNE.yawRollGain * Math.min(1, spd / 8 + 0.35);
     s.roll += (bankTarget - s.roll) * k;
-    s.camPitch = Math.max(5, Math.min(this.camTiltMax, s.camTilt - s.bodyPitch));
+    s.impact *= Math.exp(-dt * 3.5);
+    const shake = s.impact * s.impact;
+    s.roll += Math.sin(now * 0.061) * shake * 9;
+    s.camPitch = Math.max(5, Math.min(this.camTiltMax, s.camTilt - s.bodyPitch + Math.sin(now * 0.047) * shake * 6));
 
     // --- telemetry ---
     s.groundSpeed = spd * scale;

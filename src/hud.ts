@@ -48,6 +48,19 @@ export class Hud {
     this.canvas.style.display = this.visible ? '' : 'none';
   }
 
+  /** Collision feedback: red edge flash + toast scaled by strength. */
+  impact(strength: number) {
+    const el = document.getElementById('impact');
+    if (el) {
+      el.style.transition = 'none';
+      el.style.opacity = String(Math.min(0.9, 0.25 + strength));
+      void el.offsetWidth;
+      el.style.transition = 'opacity 0.6s ease-out';
+      el.style.opacity = '0';
+    }
+    if (strength > 0.25) this.toast(strength > 0.7 ? 'HARD IMPACT' : 'IMPACT', 900);
+  }
+
   setSource(src: 'keyboard' | 'gamepad' | 'touch' | 'none') {
     const rc = src === 'gamepad';
     this.el.src.textContent = rc ? 'RC' : src === 'touch' ? 'TOUCH' : 'KB';
@@ -72,9 +85,9 @@ export class Hud {
       e.bat.textContent = `${Math.round(s.battery)}%`;
       e.batFill.style.width = `${Math.max(2, s.battery * 0.9)}%`;
       e.batFill.classList.toggle('low', s.battery < 20);
-      e.agl.textContent = fmtAlt(s.alt - s.ground);
+      e.agl.textContent = fmtAlt(s.alt - s.floor);
       e.msl.textContent = fmtAlt(s.alt);
-      const vs = s.vU * Math.min(60, Math.max(1, (s.alt - s.ground) / 150));
+      const vs = s.vU * Math.min(60, Math.max(1, (s.alt - s.floor) / 150));
       e.vs.textContent = (vs >= 0 ? '+' : '') + vs.toFixed(1);
       e.spd.textContent = fmtSpd(s.groundSpeed * 3.6);
       e.hdg.textContent = String(Math.round(s.heading) % 360).padStart(3, '0');
@@ -151,7 +164,7 @@ export class Hud {
     if (!compact) {
       const ladderH = Math.min(H * 0.42, 340), ly = H / 2;
       drawLadder(ctx, W * 0.14, ly, ladderH, s.groundSpeed * 3.6, 'km/h', true, ladderStep(s.groundSpeed * 3.6));
-      drawLadder(ctx, W * 0.86, ly, ladderH, s.alt - s.ground, 'm AGL', false, ladderStep(s.alt - s.ground));
+      drawLadder(ctx, W * 0.86, ly, ladderH, s.alt - s.floor, 'm AGL', false, ladderStep(s.alt - s.floor));
     }
 
     // ---- artificial horizon + crosshair (center) ----

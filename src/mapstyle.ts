@@ -21,8 +21,8 @@ const SKIES: Record<StyleId, SkySpecification> = {
   satellite: {
     'sky-color': '#5e9ed6',
     'horizon-color': '#dbe6ee',
-    'fog-color': '#d2dde6',
-    'fog-ground-blend': 0.72,
+    'fog-color': '#c9d8e6',
+    'fog-ground-blend': 0.88,
     'horizon-fog-blend': 0.8,
     'sky-horizon-blend': 0.55,
     'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 9, 1, 12, 0] as any,
@@ -31,7 +31,7 @@ const SKIES: Record<StyleId, SkySpecification> = {
     'sky-color': '#79b4e8',
     'horizon-color': '#e8f0f6',
     'fog-color': '#e6edf3',
-    'fog-ground-blend': 0.75,
+    'fog-ground-blend': 0.88,
     'horizon-fog-blend': 0.8,
     'sky-horizon-blend': 0.6,
     'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 9, 1, 12, 0] as any,
@@ -40,7 +40,7 @@ const SKIES: Record<StyleId, SkySpecification> = {
     'sky-color': '#05070f',
     'horizon-color': '#1a2238',
     'fog-color': '#0d1322',
-    'fog-ground-blend': 0.8,
+    'fog-ground-blend': 0.9,
     'horizon-fog-blend': 0.85,
     'sky-horizon-blend': 0.7,
     'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 0.6, 9, 0.6, 12, 0] as any,
@@ -48,9 +48,9 @@ const SKIES: Record<StyleId, SkySpecification> = {
 };
 
 const LIGHTS: Record<StyleId, LightSpecification> = {
-  satellite: { anchor: 'viewport', color: '#fff6e5', intensity: 0.45, position: [1.15, 215, 35] },
-  streets: { anchor: 'viewport', color: '#ffffff', intensity: 0.5, position: [1.15, 215, 35] },
-  night: { anchor: 'viewport', color: '#8fb4ff', intensity: 0.35, position: [1.15, 150, 45] },
+  satellite: { anchor: 'map', color: '#fff3dc', intensity: 0.55, position: [1.3, 225, 40] },
+  streets: { anchor: 'map', color: '#ffffff', intensity: 0.5, position: [1.3, 225, 40] },
+  night: { anchor: 'map', color: '#8fb4ff', intensity: 0.4, position: [1.3, 150, 45] },
 };
 
 function buildingsLayer(id: StyleId): LayerSpecification {
@@ -58,8 +58,8 @@ function buildingsLayer(id: StyleId): LayerSpecification {
     id === 'night'
       ? ['interpolate', ['linear'], ['coalesce', ['get', 'render_height'], 0], 0, '#1b2238', 60, '#2b3a63', 200, '#4a63a8']
       : id === 'satellite'
-        ? ['interpolate', ['linear'], ['coalesce', ['get', 'render_height'], 0], 0, '#cfd3d8', 80, '#dfe3e8', 250, '#f3f5f7']
-        : ['interpolate', ['linear'], ['coalesce', ['get', 'render_height'], 0], 0, '#d9d4cc', 80, '#e7e2da', 250, '#f4f1ec'];
+        ? ['interpolate', ['linear'], ['coalesce', ['get', 'render_height'], 0], 0, '#b9b3a8', 30, '#cbc6bd', 120, '#d9dde2', 300, '#e9eef4']
+        : ['interpolate', ['linear'], ['coalesce', ['get', 'render_height'], 0], 0, '#e4ddd2', 80, '#ece7df', 250, '#f7f4ef'];
   return {
     id: 'drone-buildings',
     type: 'fill-extrusion',
@@ -70,7 +70,7 @@ function buildingsLayer(id: StyleId): LayerSpecification {
       'fill-extrusion-color': color as any,
       'fill-extrusion-height': ['coalesce', ['get', 'render_height'], 8],
       'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], 0],
-      'fill-extrusion-opacity': id === 'satellite' ? 0.92 : 0.96,
+      'fill-extrusion-opacity': 1,
       'fill-extrusion-vertical-gradient': true,
     },
   };
@@ -147,7 +147,13 @@ export async function buildStyle(id: StyleId, quality: 'high' | 'low'): Promise<
   }
 
   const base = await fetchStyle(id === 'streets' ? 'liberty' : 'dark');
-  const layers = base.layers.filter((l) => !(l['source-layer' as keyof typeof l] === 'building' || l.id.startsWith('building')));
+  // Keep only big place names and water names: street labels, shields and POIs balloon at FPV pitch and clutter the view.
+  const KEEP_SYMBOL = /^(label_(town|state|city|city_capital|country_\d)|place_(town|city|city_large|state|country_\w+)|water_name(_point_label)?)$/;
+  const layers = base.layers.filter((l) => {
+    if (l['source-layer' as keyof typeof l] === 'building' || l.id.startsWith('building')) return false;
+    if (l.type === 'symbol') return KEEP_SYMBOL.test(l.id);
+    return true;
+  });
   // Insert buildings right before the first symbol layer so labels stay on top.
   const firstSymbol = layers.findIndex((l) => l.type === 'symbol');
   const idx = firstSymbol < 0 ? layers.length : firstSymbol;

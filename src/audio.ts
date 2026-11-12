@@ -94,6 +94,21 @@ export class DroneAudio {
     this.windFilter.frequency.setTargetAtTime(300 + speed01 * 1200, t, 0.25);
   }
 
+  /** Short low thud for collisions. */
+  thump(strength: number) {
+    if (!this.ctx || this._muted) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(120, t);
+    o.frequency.exponentialRampToValueAtTime(40, t + 0.25);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.4 + strength * 0.6, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+    o.connect(g).connect(this.master);
+    o.start(t); o.stop(t + 0.32);
+  }
+
   suspend() { this.ctx?.suspend(); }
   resume() { if (this.started) this.ctx?.resume(); }
 }

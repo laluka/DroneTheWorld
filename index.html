@@ -16,6 +16,7 @@
     <div id="cesium" style="display:none"></div>
     <div id="surface"></div>
     <canvas id="osd"></canvas>
+    <div id="impact"></div>
 
     <!-- Heads-up display -->
     <div id="hud" class="hidden">
@@ -45,7 +46,7 @@
         <div class="stat"><label>DIST</label><b class="mono" id="hud-dist">0.0</b><u>km</u></div>
       </div>
       <div class="hud-bc">
-        <span class="hint" id="hud-hint">W S pitch · A D roll · Q E yaw · SPACE / C throttle · drag: yaw + camera · SHIFT turbo · ESC menu</span>
+        <span class="hint" id="hud-hint">W S pitch · A D roll · Q E yaw · SPACE / C throttle · drag: yaw + camera · SHIFT turbo · ⌫ reset · ESC menu</span>
       </div>
       <div class="hud-attrib">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> · <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> · Imagery © Esri, Maxar, Earthstar Geographics · Terrain: Mapzen / AWS</div>
       <div id="toast"></div>
@@ -157,6 +158,7 @@
             <div><kbd>Wheel</kbd> <em>altitude</em></div>
             <div><kbd>I</kbd><kbd>K</kbd> <em>camera tilt</em></div>
             <div><kbd>R</kbd> <em>reset camera</em></div>
+            <div><kbd>Backspace</kbd> <em>back to launch point</em></div>
             <div><kbd>N</kbd> <em>sound on / off</em></div>
             <div><kbd>M</kbd> <em>cycle map</em></div>
             <div><kbd>H</kbd> <em>toggle HUD</em></div>

@@ -30,6 +30,7 @@ a { color: inherit; }
 #map canvas { outline: none; cursor: crosshair; }
 #map .maplibregl-ctrl-attrib, #map .maplibregl-ctrl-logo { display: none; }
 
+#impact { position: fixed; inset: 0; pointer-events: none; z-index: 5; opacity: 0; box-shadow: inset 0 0 160px 40px rgba(255,60,80,0.9); }
 #osd { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
 
 /* vignette + subtle grain */

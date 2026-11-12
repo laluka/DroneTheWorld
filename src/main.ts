@@ -40,6 +40,8 @@ let switching = false;
 let keyRowOpen = false;
 let lastSource: 'keyboard' | 'gamepad' | 'touch' | 'none' = 'keyboard';
 let lastSrcUpdate = 0;
+let lastImpacts = 0;
+const probe = (lng: number, lat: number) => engine.surface(lng, lat);
 
 // ---------- engines ----------
 const maplibre = new MapLibreEngine($('map'), settings.quality, [drone.s.lng, drone.s.lat]);
@@ -120,8 +122,12 @@ function frame(now: number) {
   const c = input.poll(dt, now);
   lastSource = c.source !== 'none' ? c.source : lastSource;
   if (now - lastSrcUpdate > 300) { lastSrcUpdate = now; hud.setSource(input.padId && now - input.padLastActive < 3000 ? 'gamepad' : lastSource); }
-  const ground = switching ? null : engine.groundElevation(drone.s.lng, drone.s.lat);
-  drone.step(dt, c, ground, now);
+  drone.step(dt, c, switching ? null : probe, now);
+  if (drone.s.impacts !== lastImpacts) {
+    lastImpacts = drone.s.impacts;
+    hud.impact(drone.s.impact);
+    if (settings.sound) audio.thump(drone.s.impact);
+  }
   engine.setCamera(drone.s);
   hud.update(drone.s, dt, now);
   if (settings.sound) audio.update(drone.s.motor, Math.min(1, Math.hypot(drone.s.vE, drone.s.vN) / 45), drone.s.boost);
@@ -138,7 +144,7 @@ requestAnimationFrame(frame);
 // ---------- hash (shareable links) ----------
 function writeHash() {
   const s = drone.s;
-  const h = `#${s.lng.toFixed(5)},${s.lat.toFixed(5)},${Math.round(s.alt - s.ground)},${Math.round(s.heading)},${Math.round(s.camTilt)},${settings.style}`;
+  const h = `#${s.lng.toFixed(5)},${s.lat.toFixed(5)},${Math.round(s.alt - s.floor)},${Math.round(s.heading)},${Math.round(s.camTilt)},${settings.style}`;
   if (location.hash !== h) history.replaceState(null, '', h);
 }
 function readHash(): { lng: number; lat: number; agl: number; heading: number; pitch: number; style?: ViewId } | null {
@@ -160,8 +166,10 @@ const fade = $('fade');
 const menu = $('menu');
 const resumeBtn = $('resume');
 
+let lastPlace: Place | null = null;
 async function flyTo(p: Place, instant = false) {
   launched = true;
+  lastPlace = p;
   if (!instant) { fade.classList.add('on'); await wait(420); }
   drone.teleport(p.lng, p.lat, p.heading, p.agl, p.pitch ?? 84);
   currentPlaceName = p.sub ? `${p.name} · ${p.sub}` : p.name;
@@ -432,6 +440,7 @@ input.onKey = (code, ev) => {
     case 'KeyM': setView(VIEW_IDS[(VIEW_IDS.indexOf(settings.style) + 1) % (googleKey() ? VIEW_IDS.length : STYLE_IDS.length)]); break;
     case 'KeyH': hud.toggle(); break;
     case 'KeyR': drone.levelCamera(); hud.toast('CAMERA RESET'); break;
+    case 'Backspace': if (lastPlace) { ev.preventDefault(); flyTo(lastPlace); } break;
     case 'KeyF': toggleFullscreen(); break;
     case 'KeyP': screenshot(); break;
     case 'KeyN': { setSound(!settings.sound); hud.toast(settings.sound ? 'SOUND ON' : 'SOUND OFF'); break; }

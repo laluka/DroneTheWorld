@@ -1,6 +1,6 @@
 import * as Cesium from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
-import type { Engine } from './types';
+import type { Engine, Surface } from './types';
 import type { DroneState } from '../drone';
 
 const rad = Cesium.Math.toRadians;
@@ -11,7 +11,7 @@ export class CesiumEngine implements Engine {
   readonly maxCamTilt = 112;
   private viewer: Cesium.Viewer;
   private tileset: Cesium.Cesium3DTileset | null = null;
-  private lastSample = { t: 0, lng: 0, lat: 0, h: null as number | null };
+  private cache = new Map<string, { t: number; h: number | null }>();
   private verticalFov = 75;
 
   private constructor(private container: HTMLElement, quality: 'high' | 'low') {
@@ -68,16 +68,19 @@ export class CesiumEngine implements Engine {
     });
   }
 
-  groundElevation(lng: number, lat: number): number | null {
+  /** Google tiles have no separate ground: the sampled top surface (roofs included) is the floor, walls show as height jumps. */
+  surface(lng: number, lat: number): Surface | null {
+    const key = `${lng.toFixed(5)},${lat.toFixed(5)}`;
     const now = performance.now();
-    const moved = Math.hypot(lng - this.lastSample.lng, lat - this.lastSample.lat) > 1e-6;
-    if (now - this.lastSample.t < 100 && !moved) return this.lastSample.h;
-    if (now - this.lastSample.t < 60) return this.lastSample.h;
+    const hit = this.cache.get(key);
+    if (hit && now - hit.t < 250) return hit.h === null ? null : { ground: hit.h };
     const scene = this.viewer.scene;
     let h: number | undefined;
     if (scene.sampleHeightSupported) h = scene.sampleHeight(Cesium.Cartographic.fromDegrees(lng, lat), undefined, 1);
-    this.lastSample = { t: now, lng, lat, h: h === undefined || !Number.isFinite(h) ? this.lastSample.h : h };
-    return this.lastSample.h;
+    const v = h === undefined || !Number.isFinite(h) ? (hit?.h ?? null) : h;
+    this.cache.set(key, { t: now, h: v });
+    if (this.cache.size > 64) this.cache.delete(this.cache.keys().next().value!);
+    return v === null ? null : { ground: v };
   }
 
   tilesLoaded() { return this.tileset ? this.tileset.tilesLoaded : false; }

@@ -1,12 +1,19 @@
 import type { DroneState } from '../drone';
 
+/** What is under / around a point: ground level plus any solid volume above it (all heights MSL, meters). */
+export interface Surface {
+  ground: number;
+  /** solid volume [base, top] above ground, e.g. a building; absent on open ground */
+  solid?: { base: number; top: number };
+}
+
 export interface Engine {
   readonly id: 'maplibre' | 'cesium';
   /** Highest camera tilt the renderer can display without artifacts (MapLibre pitch convention). */
   readonly maxCamTilt: number;
   setCamera(s: DroneState): void;
-  /** Height of the ground/roof under a point, in the engine's vertical datum. null while unknown. */
-  groundElevation(lng: number, lat: number): number | null;
+  /** Ground and obstacles at a point. null while unknown (data still loading). */
+  surface(lng: number, lat: number): Surface | null;
   tilesLoaded(): boolean;
   show(): void;
   hide(): void;

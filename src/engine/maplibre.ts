@@ -1,7 +1,8 @@
 import { Map as MLMap, setWorkerUrl } from 'maplibre-gl';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import type { Engine } from './types';
+import type { Engine, Surface } from './types';
+import { BuildingField } from '../buildings';
 import type { DroneState } from '../drone';
 import { buildStyle, type StyleId } from '../mapstyle';
 
@@ -15,6 +16,7 @@ export class MapLibreEngine implements Engine {
   private styleLoading = false;
   private quality: 'high' | 'low';
   private _ready = false;
+  readonly buildings = new BuildingField();
 
   constructor(private container: HTMLElement, quality: 'high' | 'low', center: [number, number]) {
     this.quality = quality;
@@ -52,6 +54,7 @@ export class MapLibreEngine implements Engine {
       this.map.setStyle(style, { diff: false });
       await new Promise<void>((res) => this.map.once('style.load', () => res()));
       this.applyCameraTuning();
+      this.buildings.setTemplate(await this.vectorTemplate());
       this._ready = true;
     } finally {
       this.styleLoading = false;
@@ -73,10 +76,20 @@ export class MapLibreEngine implements Engine {
     } catch { /* transient during style swap */ }
   }
 
-  groundElevation(lng: number, lat: number): number | null {
+  private async vectorTemplate(): Promise<string | null> {
+    const src = this.map.getSource('openmaptiles') as any;
+    if (src?.tiles?.[0]) return src.tiles[0];
+    const url = src?.url ?? 'https://tiles.openfreemap.org/planet';
+    try { const j = await (await fetch(url)).json(); return j.tiles?.[0] ?? null; } catch { return null; }
+  }
+
+  surface(lng: number, lat: number): Surface | null {
     if (this.styleLoading || !this._ready) return null;
-    if (this.quality === 'low') return 0;
-    return this.map.queryTerrainElevation([lng, lat]);
+    const t = this.quality === 'low' ? 0 : this.map.queryTerrainElevation([lng, lat]);
+    if (t === null || !Number.isFinite(t)) return null;
+    this.buildings.prefetch(lng, lat);
+    const b = this.buildings.at(lng, lat);
+    return b ? { ground: t, solid: { base: t + b.base, top: t + b.top } } : { ground: t };
   }
 
   tilesLoaded() { return this.map.areTilesLoaded(); }
