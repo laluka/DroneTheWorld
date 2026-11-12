@@ -52,11 +52,10 @@ npm run build    # static output in dist/
 
 ## Deploy to GitHub Pages
 
-Hosting is optional and nothing is published by default. When you want it:
-
-1. Push to `main` of a GitHub repo. The workflow in `.github/workflows/deploy.yml` builds and publishes `dist/`.
-2. In the repo settings, set **Pages → Source** to **GitHub Actions** (first time only).
-3. The site is served from `https://<user>.github.io/<repo>/` (the build uses a relative base, so any path works).
+One-time setup in the GitHub UI: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
+After that, every push to `main` runs `.github/workflows/deploy.yml`, which builds and publishes `dist/` to
+`https://<user>.github.io/<repo>/`. The build uses a relative base, so it works from that sub-path.
+You can also re-run it by hand from the **Actions** tab (workflow "Deploy to GitHub Pages" → *Run workflow*).
 
 ## Photoreal 3D (Google key)
 

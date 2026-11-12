@@ -15,6 +15,8 @@ export async function search(q: string, signal?: AbortSignal): Promise<GeoResult
     if (typeof lng !== 'number') continue;
     const name = p.name || p.street || p.city || p.country || q;
     const parts = [p.city && p.city !== name ? p.city : null, p.state && p.state !== name ? p.state : null, p.country].filter(Boolean);
+    // Photon often returns the same place twice (node + way); keep the first.
+    if (out.some((o) => o.name === name && Math.abs(o.lng - lng) < 0.003 && Math.abs(o.lat - lat) < 0.003)) continue;
     out.push({ name, detail: parts.join(', '), lng, lat, kind: p.osm_value || p.type || '' });
   }
   return out;

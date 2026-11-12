@@ -265,7 +265,8 @@ function renderResults() {
 function pick(r: GeoResult) {
   results = []; renderResults(); searchEl.value = r.name;
   const isCity = /city|town|village|suburb|administrative|country|state/.test(r.kind);
-  flyTo({ name: r.name, sub: r.detail, lng: r.lng, lat: r.lat, heading: 0, agl: isCity ? 320 : 180, grad: '' });
+  // Start a little way out, facing the place, so you see it ahead and fly in to discover it.
+  flyTo({ ...approach(r.lng, r.lat, isCity ? 1500 : 650, 200), name: r.name, sub: r.detail, agl: isCity ? 320 : 160, grad: '' });
 }
 async function runSearch(q: string) {
   searchCtl?.abort();
@@ -379,7 +380,7 @@ function renderPassport() {
 $('passport').addEventListener('click', (e) => {
   const b = (e.target as HTMLElement).closest<HTMLElement>('.stamp');
   if (!b) return;
-  flyTo({ name: b.dataset.title!, sub: '', lng: +b.dataset.lng! - 0.002, lat: +b.dataset.lat! - 0.0015, heading: 45, agl: 120, grad: '' });
+  flyTo({ ...approach(+b.dataset.lng!, +b.dataset.lat!, 500, 200), name: b.dataset.title!, sub: '', agl: 140, grad: '' });
 });
 renderPassport();
 
@@ -543,6 +544,13 @@ function screenshot() {
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   }, 'image/png');
   hud.toast('SNAPSHOT SAVED');
+}
+/** Launch point `dist` meters from a target, coming from compass `fromBearing`, heading toward it. */
+function approach(lng: number, lat: number, dist: number, fromBearing: number) {
+  const b = (fromBearing * Math.PI) / 180;
+  const dLat = (Math.cos(b) * dist) / 111_132;
+  const dLng = (Math.sin(b) * dist) / (111_320 * Math.cos((lat * Math.PI) / 180));
+  return { lng: lng + dLng, lat: lat + dLat, heading: (fromBearing + 180) % 360 };
 }
 function wait(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
 function esc(s: string) { return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!); }
