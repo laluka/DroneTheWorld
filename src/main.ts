@@ -18,13 +18,16 @@ const VIEW_IDS: ViewId[] = [...STYLE_IDS, 'photoreal'];
 
 // ---------- settings (persisted) ----------
 interface Settings { v: number; flightMode: FlightMode; style: ViewId; sound: boolean; volume: number; quality: 'high' | 'low'; googleKey: string; keyRates: number; }
-const SETTINGS_VERSION = 2;
-const DEFAULTS: Settings = { v: SETTINGS_VERSION, flightMode: 'angle', style: 'satellite', sound: false, volume: 0.6, quality: 'high', googleKey: '', keyRates: 1 };
+const SETTINGS_VERSION = 3;
+const DEFAULTS: Settings = { v: SETTINGS_VERSION, flightMode: 'acro', style: 'satellite', sound: false, volume: 0.6, quality: 'high', googleKey: '', keyRates: 1 };
 const settings: Settings = (() => {
   let saved: Partial<Settings> = {};
   try { saved = JSON.parse(localStorage.getItem('drone.settings') || '{}'); } catch { /* ignore */ }
   // v2: everyone starts again on the sunny satellite view
-  if ((saved.v ?? 0) < SETTINGS_VERSION) { delete saved.style; saved.v = SETTINGS_VERSION; }
+  if ((saved.v ?? 0) < 2) delete saved.style;
+  // v3: acro is the default flight mode
+  if ((saved.v ?? 0) < 3) delete saved.flightMode;
+  saved.v = SETTINGS_VERSION;
   return { ...DEFAULTS, ...saved };
 })();
 const saveSettings = () => { try { localStorage.setItem('drone.settings', JSON.stringify(settings)); } catch { /* ignore */ } };
@@ -47,6 +50,7 @@ let lastSource: 'keyboard' | 'gamepad' | 'touch' | 'none' = 'keyboard';
 let lastSrcUpdate = 0;
 let lastImpacts = 0;
 const probe = (lng: number, lat: number) => engine.surface(lng, lat);
+const shakeEl = () => $(engine.id === 'cesium' ? 'cesium' : 'map');
 const discoveries = new Discoveries();
 let lastDiscoverTick = 0;
 
@@ -141,6 +145,8 @@ function frame(now: number) {
     if (settings.sound) audio.thump(drone.s.impact);
   }
   engine.setCamera(drone.s);
+  const j = drone.s.jitter;
+  shakeEl().style.transform = j.x || j.y || j.r ? `translate(${j.x.toFixed(2)}px, ${j.y.toFixed(2)}px) rotate(${j.r.toFixed(3)}deg) scale(1.03)` : '';
   hud.update(drone.s, dt, now);
   if (settings.sound) audio.update(drone.s, Math.min(1, Math.hypot(drone.s.vE, drone.s.vN, drone.s.vU) / 45));
 

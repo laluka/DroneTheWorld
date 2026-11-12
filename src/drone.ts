@@ -34,6 +34,8 @@ export interface DroneState {
   camPitch: number;
   /** how far the camera looks above what the renderer can pitch to, degrees; rendered as a lens shift */
   lookUp: number;
+  /** image-space shake (vibration, prop wash, impacts), applied to the rendered frame, not the camera */
+  jitter: { x: number; y: number; r: number };
   /** camera roll in degrees */
   roll: number;
   /** body pitch in degrees, positive = nose down */
@@ -69,7 +71,7 @@ const TUNE = {
   acc: 24, accBoost: 48, drag: 0.75, maxSpeed: 32, maxSpeedBoost: 60,
   vAcc: 20, vAccBoost: 34, vDrag: 2.2, maxVS: 13, maxVSBoost: 24,
   yawRate: 130, yawRateBoost: 170, yawTau: 0.11,
-  camTiltSens: 0.1, camTiltKeyRate: 40, camTiltMin: 25,
+  camTiltSens: 0.1, camTiltKeyRate: 40, camTiltMin: 25, camTiltCineMax: 88,
   pitchGain: 16, pitchGainBoost: 24, rollGain: 26, yawRollGain: 0.11, attitudeTau: 0.16,
   // physics (angle / acro)
   /** max thrust as a multiple of hover thrust */
@@ -81,7 +83,7 @@ const TUNE = {
   // Betaflight "BF" rates: rc rate, super rate, expo → ~670°/s roll/pitch, ~500°/s yaw at full stick
   rcRate: 1.0, superRate: 0.7, rcExpo: 0.1,
   yawRcRate: 1.0, yawSuperRate: 0.6, yawExpo: 0.1,
-  maxLookUp: 40,
+  maxLookUp: 50,
   angleMax: 55, angleMaxBoost: 68, angleYaw: 200, angleResponse: 9,
   uptiltDefault: 20,
   uptiltMin: 0,
@@ -130,7 +132,7 @@ const bfRate = (x: number, rcRate: number, superRate: number, expo: number) => {
 export class Drone {
   s: DroneState = {
     lng: 2.3015, lat: 48.8515, alt: 250, ground: 0, floor: 0, impact: 0, impacts: 0, heading: 325,
-    camTilt: 84, uptilt: TUNE.uptiltDefault, camPitch: 84, lookUp: 0, roll: 0, bodyPitch: 0,
+    camTilt: 84, uptilt: TUNE.uptiltDefault, camPitch: 84, lookUp: 0, jitter: { x: 0, y: 0, r: 0 }, roll: 0, bodyPitch: 0,
     vE: 0, vN: 0, vU: 0, groundSpeed: 0, scale: 1, boost: false, mode: 'angle', motor: 0,
     distance: 0, flightTime: 0, battery: 100, stick: { pitch: 0, roll: 0, yaw: 0, throttle: 0 },
   };
@@ -145,7 +147,6 @@ export class Drone {
   /** Renderer-dependent: MapLibre can't look above the horizon, Cesium can a bit. */
   setCamLimits(maxTilt: number) {
     this.camTiltMax = maxTilt;
-    this.s.camTilt = Math.min(this.s.camTilt, maxTilt);
   }
 
   setMode(m: FlightMode) {
@@ -282,13 +283,18 @@ export class Drone {
     if (s.alt > maxAlt) { s.alt = maxAlt; if (s.vU > 0) s.vU = 0; }
 
     // --- impact shake, frame vibration under load, prop-wash wobble when sinking through our own wash ---
+    // Applied to the rendered image (CSS), never to the map camera: tiny camera jitter makes the map reload tiles.
     s.impact *= Math.exp(-dt * 3.5);
     const shake = s.impact * s.impact;
     const physicsMode = s.mode !== 'cine';
-    const vib = physicsMode ? 0.08 + s.motor * 0.18 : 0;
-    const wash = physicsMode && s.vU < -2.5 && this.thrust < 1.3 ? Math.min(1, (-s.vU - 2.5) / 10) * 2.2 : 0;
-    s.roll += Math.sin(now * 0.061) * shake * 9 + Math.sin(now * 0.37) * vib + Math.sin(now * 0.023 + 1) * wash;
-    s.camPitch = Math.max(5, Math.min(this.camTiltMax, s.camPitch + Math.sin(now * 0.047) * shake * 6 + Math.sin(now * 0.29 + 2) * vib + Math.sin(now * 0.019) * wash));
+    const vib = physicsMode ? 0.25 + s.motor * 0.9 : 0;
+    const wash = physicsMode && s.vU < -2.5 && this.thrust < 1.3 ? Math.min(1, (-s.vU - 2.5) / 10) : 0;
+    const n = () => Math.random() * 2 - 1;
+    s.jitter = {
+      x: n() * vib + Math.sin(now * 0.021) * wash * 6 + Math.sin(now * 0.05) * shake * 14,
+      y: n() * vib + Math.sin(now * 0.017 + 1) * wash * 6 + Math.sin(now * 0.043) * shake * 14,
+      r: Math.sin(now * 0.023) * wash * 1.6 + Math.sin(now * 0.061) * shake * 4,
+    };
 
     // --- telemetry ---
     const spd = Math.hypot(s.vE, s.vN);
@@ -371,7 +377,7 @@ export class Drone {
     s.heading = ((s.heading % 360) + 360) % 360;
 
     s.camTilt += c.gimbal * TUNE.camTiltKeyRate * dt - c.lookDY * TUNE.camTiltSens;
-    s.camTilt = Math.max(TUNE.camTiltMin, Math.min(this.camTiltMax, s.camTilt));
+    s.camTilt = Math.max(TUNE.camTiltMin, Math.min(TUNE.camTiltCineMax, s.camTilt));
 
     const acc = boost ? TUNE.accBoost : TUNE.acc;
     const h = s.heading * deg;
@@ -395,8 +401,9 @@ export class Drone {
     s.bodyPitch += (c.pitch * (boost ? TUNE.pitchGainBoost : TUNE.pitchGain) - s.bodyPitch) * k;
     const bankTarget = c.roll * TUNE.rollGain + this.yawVel * TUNE.yawRollGain * Math.min(1, spd / 8 + 0.35);
     s.roll += (bankTarget - s.roll) * k;
-    s.camPitch = Math.max(5, Math.min(this.camTiltMax, s.camTilt - s.bodyPitch));
-    s.lookUp = 0;
+    const want = s.camTilt - s.bodyPitch;
+    s.camPitch = Math.max(5, Math.min(this.camTiltMax, want));
+    s.lookUp = Math.max(0, want - this.camTiltMax);
     this.q = qFromEuler(s.heading, 0, 0);
 
     const effort = Math.min(1, 0.28 + (Math.abs(c.pitch) + Math.abs(c.roll)) * 0.3 + Math.max(0, c.throttle) * 0.5 + Math.abs(c.yaw) * 0.1);

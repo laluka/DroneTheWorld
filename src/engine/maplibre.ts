@@ -4,7 +4,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import type { Engine, Surface } from './types';
 import { BuildingField } from '../buildings';
 import type { DroneState } from '../drone';
-import { buildStyle, horizonColor, type StyleId } from '../mapstyle';
+import { buildStyle, skyColors, type StyleId } from '../mapstyle';
 
 setWorkerUrl(workerUrl);
 
@@ -15,12 +15,15 @@ export const lensShiftPx = (deg: number, height: number, vfov: number) =>
 /** Free, keyless engine: OpenFreeMap vectors + Esri imagery + AWS terrain, buildings extruded from OSM heights. */
 export class MapLibreEngine implements Engine {
   readonly id = 'maplibre' as const;
-  readonly maxCamTilt = 86;
+  /** Above ~80° the map's centre runs off to the horizon and tiny pitch changes reload tiles; higher looks use a lens shift. */
+  readonly maxCamTilt = 79;
   get vfov() { return this.quality === 'low' ? 62 : 75; }
   readonly map: MLMap;
   private styleLoading = false;
   private quality: 'high' | 'low';
   private _ready = false;
+  private sky = skyColors('satellite');
+  private lastSkyCss = '';
   readonly buildings = new BuildingField();
 
   constructor(private container: HTMLElement, quality: 'high' | 'low', center: [number, number]) {
@@ -56,7 +59,7 @@ export class MapLibreEngine implements Engine {
     this.styleLoading = true;
     try {
       const style = await buildStyle(id, quality);
-      this.container.style.background = horizonColor(id);
+      this.sky = skyColors(id);
       this.map.setStyle(style, { diff: false });
       await new Promise<void>((res) => this.map.once('style.load', () => res()));
       this.applyCameraTuning();
@@ -83,7 +86,22 @@ export class MapLibreEngine implements Engine {
       const dx = shift * Math.sin(s.roll * Math.PI / 180), dy = shift * Math.cos(s.roll * Math.PI / 180);
       const padding = { left: Math.max(0, 2 * dx), right: Math.max(0, -2 * dx), top: Math.max(0, 2 * dy), bottom: Math.max(0, -2 * dy) };
       this.map.jumpTo({ ...opts, padding });
+      this.paintSky(s.camPitch, s.roll, shift);
     } catch { /* transient during style swap */ }
+  }
+
+  /** Sky gradient behind the (transparent-sky) canvas, with the horizon where the camera really sees it. */
+  private paintSky(camPitch: number, roll: number, shift: number) {
+    const W = this.container.clientWidth, H = this.container.clientHeight;
+    const F = H / 2 / Math.tan((this.vfov * Math.PI) / 360);
+    const horizonOffset = -F * Math.tan(((90 - camPitch) * Math.PI) / 180) + shift; // along the camera's down axis
+    const theta = 180 - roll; // CSS gradient angle pointing from sky to ground
+    const t = (theta * Math.PI) / 180;
+    const L = Math.abs(W * Math.sin(t)) + Math.abs(H * Math.cos(t));
+    const stop = 50 + (horizonOffset / L) * 100;
+    const { sky, horizon, fog } = this.sky;
+    const css = `linear-gradient(${theta.toFixed(1)}deg, ${sky} ${(stop - 45).toFixed(1)}%, ${horizon} ${(stop - 1).toFixed(1)}%, ${fog} ${(stop + 2).toFixed(1)}%, ${fog} 100%)`;
+    if (css !== this.lastSkyCss) { this.container.style.background = css; this.lastSkyCss = css; }
   }
 
   private async vectorTemplate(): Promise<string | null> {

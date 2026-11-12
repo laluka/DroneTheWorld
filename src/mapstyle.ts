@@ -53,8 +53,20 @@ const LIGHTS: Record<StyleId, LightSpecification> = {
   night: { anchor: 'map', color: '#8fb4ff', intensity: 0.4, position: [1.3, 150, 45] },
 };
 
-/** Sky colour right above the horizon; also painted behind the map so a lens-shifted view has no gap. */
-export const horizonColor = (id: StyleId) => SKIES[id]['horizon-color'] as string;
+/**
+ * Sky colours. The map's own sky is made transparent and the app paints this gradient behind the canvas,
+ * pinned to the true horizon, so lens-shifted (look-up) views have a continuous sky.
+ */
+export const skyColors = (id: StyleId) => ({
+  sky: SKIES[id]['sky-color'] as string,
+  horizon: SKIES[id]['horizon-color'] as string,
+  fog: SKIES[id]['fog-color'] as string,
+});
+const transparentSky = (id: StyleId): SkySpecification => ({
+  ...SKIES[id],
+  'sky-color': 'rgba(0,0,0,0)',
+  'horizon-color': 'rgba(0,0,0,0)',
+});
 
 function buildingsLayer(id: StyleId): LayerSpecification {
   const color =
@@ -143,7 +155,7 @@ export async function buildStyle(id: StyleId, quality: 'high' | 'low'): Promise<
         buildingsLayer(id),
         placeLabels(id),
       ],
-      sky: SKIES[id],
+      sky: transparentSky(id),
       light: LIGHTS[id],
       terrain,
     } as StyleSpecification;
@@ -173,7 +185,7 @@ export async function buildStyle(id: StyleId, quality: 'high' | 'low'): Promise<
     ...base,
     sources: { ...base.sources, 'terrain-dem': terrainSource },
     layers,
-    sky: SKIES[id],
+    sky: transparentSky(id),
     light: LIGHTS[id],
     terrain,
   } as StyleSpecification;

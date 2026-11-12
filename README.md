@@ -18,9 +18,9 @@ Pure frontend, no backend, no account: a static site that runs on GitHub Pages.
 
 ## Flight modes (`V` to cycle)
 
-- **Angle** (default): sticks tilt the quad, it levels itself when released. Real thrust, gravity and momentum;
+- **Angle**: sticks tilt the quad, it levels itself when released. Real thrust, gravity and momentum;
   centred throttle holds altitude. Best on keyboard.
-- **Acro**: sticks command rotation rates (Betaflight "BF" rates: RC rate 1.0, super rate 0.7, ~670°/s); the quad keeps its attitude.
+- **Acro** (default): sticks command rotation rates (Betaflight "BF" rates: RC rate 1.0, super rate 0.7, ~670°/s); the quad keeps its attitude.
   Bank and pull to carve turns, barrel rolls work. Centred throttle = hover thrust, so it suits spring-centred
   RC sticks (DJI remotes). The map renderer can't look above the horizon, so forward/back flips are not possible.
 - **Cine**: smooth assisted flight for sightseeing.
