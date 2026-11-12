@@ -111,6 +111,29 @@ export class Hud {
     this.drawOSD(s);
   }
 
+  /** DVR-style stick overlay: left = yaw/throttle, right = roll/pitch (mode 2). */
+  private drawSticks(ctx: CanvasRenderingContext2D, s: DroneState, W: number, H: number) {
+    const size = 46, gap = 18, y = H - 112;
+    const boxes: [number, number, number][] = [
+      [W / 2 - gap / 2 - size, s.stick.yaw, s.stick.throttle],
+      [W / 2 + gap / 2, s.stick.roll, s.stick.pitch],
+    ];
+    ctx.save();
+    ctx.lineWidth = 1;
+    for (const [x, sx, sy] of boxes) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      ctx.beginPath(); ctx.rect(x, y, size, size); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x + size / 2, y + 4); ctx.lineTo(x + size / 2, y + size - 4); ctx.moveTo(x + 4, y + size / 2); ctx.lineTo(x + size - 4, y + size / 2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.stroke();
+      const px = x + size / 2 + Math.max(-1, Math.min(1, sx)) * (size / 2 - 4);
+      const py = y + size / 2 - Math.max(-1, Math.min(1, sy)) * (size / 2 - 4);
+      ctx.fillStyle = 'rgba(255,255,255,0.95)';
+      ctx.beginPath(); ctx.arc(px, py, 3.5, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
   private drawBeacons(ctx: CanvasRenderingContext2D, s: DroneState, w: WorldMarks, W: number, H: number) {
     const items = w.pois
       .map((p) => ({ p, d: Math.hypot((p.lng - s.lng) * 111_320 * Math.cos(s.lat * DEG), (p.lat - s.lat) * 111_132) }))
@@ -207,6 +230,7 @@ export class Hud {
     ctx.stroke();
 
     if (this.world) this.drawBeacons(ctx, s, this.world, W, H);
+    if (!compact) this.drawSticks(ctx, s, W, H);
 
     // ---- compass tape (top center) ----
     const cx = W / 2;
@@ -251,15 +275,19 @@ export class Hud {
 
     // ---- artificial horizon + crosshair (center) ----
     const cy = H / 2;
-    const horizonDeg = 90 - s.camPitch; // degrees camera looks below the horizon
-    const pxPerDegH = Math.min(H, W) / 70;
+    const vfov = this.world?.vfov ?? 75;
+    const F = H / 2 / Math.tan((vfov * Math.PI) / 360);
+    const camElev = s.camPitch - 90; // camera axis elevation, degrees (negative = looking down)
+    const shift = s.lookUp > 0 ? F * Math.tan((s.lookUp * Math.PI) / 180) : 0;
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(-s.roll * Math.PI / 180);
     const span = Math.min(W, H) * 0.22;
     ctx.strokeStyle = 'rgba(232,241,242,0.7)'; ctx.fillStyle = dim; ctx.font = '500 10px "JetBrains Mono", monospace';
     for (let p = -30; p <= 30; p += 10) {
-      const y = (horizonDeg + p) * pxPerDegH * -1; // positive pitch lines (above camera axis) go up
+      const rel = -p - camElev; // line elevation relative to the camera axis
+      if (Math.abs(rel) > 80) continue;
+      const y = -F * Math.tan((rel * Math.PI) / 180) + shift; // true perspective, plus the lens shift
       if (Math.abs(y) > H * 0.4) continue;
       const w = p === 0 ? span * 1.6 : span * (p % 20 === 0 ? 0.6 : 0.4);
       ctx.globalAlpha = p === 0 ? 0.9 : 0.5;
@@ -289,7 +317,7 @@ export class Hud {
     // ---- speed scale badge ----
     if (s.scale > 1.05) {
       ctx.fillStyle = 'rgba(255,209,102,0.85)'; ctx.font = '600 11px "JetBrains Mono", monospace'; ctx.textAlign = 'center';
-      ctx.fillText(`×${s.scale.toFixed(s.scale < 10 ? 1 : 0)} ALT SPEED`, cx, cy + rr + 26);
+      ctx.fillText(`×${s.scale.toFixed(s.scale < 10 ? 1 : 0)} ALT SPEED`, cx, compact ? cy + rr + 26 : H - 126);
     }
   }
 }
@@ -314,7 +342,9 @@ function project(s: DroneState, lng: number, lat: number, h: number, W: number, 
   const a = -s.roll * DEG;
   const rx = sx * Math.cos(a) - sy * Math.sin(a);
   const ry = sx * Math.sin(a) + sy * Math.cos(a);
-  return { x: W / 2 + rx, y: H / 2 + ry, z };
+  const shift = s.lookUp > 0 ? F * Math.tan((s.lookUp * Math.PI) / 180) : 0;
+  const rr = s.roll * DEG;
+  return { x: W / 2 + rx + shift * Math.sin(rr), y: H / 2 + ry + shift * Math.cos(rr), z };
 }
 
 function ladderStep(v: number) { return v < 100 ? 10 : v < 1000 ? 50 : v < 10000 ? 500 : 5000; }

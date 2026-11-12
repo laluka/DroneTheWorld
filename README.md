@@ -20,12 +20,14 @@ Pure frontend, no backend, no account: a static site that runs on GitHub Pages.
 
 - **Angle** (default): sticks tilt the quad, it levels itself when released. Real thrust, gravity and momentum;
   centred throttle holds altitude. Best on keyboard.
-- **Acro**: sticks command rotation rates (Betaflight-style rates and expo); the quad keeps its attitude.
+- **Acro**: sticks command rotation rates (Betaflight "BF" rates: RC rate 1.0, super rate 0.7, ~670°/s); the quad keeps its attitude.
   Bank and pull to carve turns, barrel rolls work. Centred throttle = hover thrust, so it suits spring-centred
   RC sticks (DJI remotes). The map renderer can't look above the horizon, so forward/back flips are not possible.
 - **Cine**: smooth assisted flight for sightseeing.
 
-The FPV camera is tilted up on the frame (20° by default, mouse drag up/down to change).
+The FPV camera is tilted up on the frame (20° by default, mouse drag up/down to change). The map renderer can't pitch
+above the horizon, so looking higher (hovering with uptilt) is rendered as a lens shift. Frame vibration grows with
+motor load, and dropping through your own prop wash makes the quad wobble.
 
 ## Controls
 
@@ -42,11 +44,13 @@ The FPV camera is tilted up on the frame (20° by default, mouse drag up/down to
 | `M` `H` `N` `P` `F` | cycle map · toggle HUD · sound · screenshot · fullscreen |
 | `1`–`9` | jump to preset · `Esc` menu |
 
-**Radio controller first.** Any controller the browser sees as a gamepad works, including DJI remotes
-plugged in over USB (RC-N1/N2 in simulator/joystick mode, DJI FPV Remote Controller 2, RC Motion-style HID devices).
-Open the menu, then **Controller → Calibrate sticks**: leave sticks at rest, then push throttle up, yaw right,
-pitch forward, roll right, and press a turbo button. Axis order and direction are learned and saved per controller,
-with adjustable deadzone and expo. The OSD shows `RC` when the controller is driving.
+**Radio controller first.** Any controller the browser sees as a gamepad works, including DJI remotes over USB
+(DJI FPV Remote Controller 2 / 3 and other HID-joystick radios). The first time a controller connects, a short
+wizard opens: leave the sticks at rest, push throttle up, yaw right, pitch forward, roll right, then optionally press
+a turbo button and flip a flight-mode switch (positions select Angle / Cine / Acro, a button cycles them).
+Axis order, direction and rest position are saved per controller; deadzone and expo are adjustable in the menu.
+DJI remotes start from a DJI layout guess, but run the wizard anyway: stick layouts differ between firmwares.
+The OSD shows `RC` when the controller is flying, and a DVR-style stick overlay so you can see your inputs.
 
 Keyboard is the fallback: keys ramp in and out like a stick, and the **Rates** slider scales yaw and throttle.
 Buildings are solid: the drone bounces off walls (with a shake and a red flash), slides along them, and can land on roofs.

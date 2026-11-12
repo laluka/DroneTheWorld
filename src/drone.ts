@@ -32,6 +32,8 @@ export interface DroneState {
   uptilt: number;
   /** effective camera pitch handed to the renderer (MapLibre convention) */
   camPitch: number;
+  /** how far the camera looks above what the renderer can pitch to, degrees; rendered as a lens shift */
+  lookUp: number;
   /** camera roll in degrees */
   roll: number;
   /** body pitch in degrees, positive = nose down */
@@ -76,7 +78,10 @@ const TUNE = {
   /** quadratic air drag, 1/m: terminal ~45 m/s at full forward tilt */
   dragQ: 0.0065,
   dragLin: 0.08,
-  acroRate: 560, acroYaw: 380, acroExpo: 0.55,
+  // Betaflight "BF" rates: rc rate, super rate, expo → ~670°/s roll/pitch, ~500°/s yaw at full stick
+  rcRate: 1.0, superRate: 0.7, rcExpo: 0.1,
+  yawRcRate: 1.0, yawSuperRate: 0.6, yawExpo: 0.1,
+  maxLookUp: 40,
   angleMax: 55, angleMaxBoost: 68, angleYaw: 200, angleResponse: 9,
   uptiltDefault: 20,
   uptiltMin: 0,
@@ -113,11 +118,19 @@ const eulerOf = (q: Q) => {
   };
 };
 const shape = (x: number, rate: number, expo: number) => (x * (1 - expo) + x * x * x * expo) * rate;
+/** Betaflight rate curve, degrees per second. */
+const bfRate = (x: number, rcRate: number, superRate: number, expo: number) => {
+  const a = Math.abs(x);
+  const e = x * Math.pow(a, 3) * expo + x * (1 - expo);
+  let r = 200 * rcRate * e;
+  if (superRate) r *= 1 / Math.max(0.01, Math.min(1, 1 - Math.abs(e) * superRate));
+  return r;
+};
 
 export class Drone {
   s: DroneState = {
     lng: 2.3015, lat: 48.8515, alt: 250, ground: 0, floor: 0, impact: 0, impacts: 0, heading: 325,
-    camTilt: 84, uptilt: TUNE.uptiltDefault, camPitch: 84, roll: 0, bodyPitch: 0,
+    camTilt: 84, uptilt: TUNE.uptiltDefault, camPitch: 84, lookUp: 0, roll: 0, bodyPitch: 0,
     vE: 0, vN: 0, vU: 0, groundSpeed: 0, scale: 1, boost: false, mode: 'angle', motor: 0,
     distance: 0, flightTime: 0, battery: 100, stick: { pitch: 0, roll: 0, yaw: 0, throttle: 0 },
   };
@@ -155,7 +168,7 @@ export class Drone {
   teleport(lng: number, lat: number, heading: number, agl: number, camTilt = 84) {
     const s = this.s;
     s.lng = lng; s.lat = lat; s.heading = heading; s.camTilt = camTilt; s.camPitch = camTilt;
-    s.vE = s.vN = s.vU = 0; s.roll = 0; s.bodyPitch = 0; this.yawVel = 0;
+    s.vE = s.vN = s.vU = 0; s.roll = 0; s.bodyPitch = 0; s.lookUp = 0; this.yawVel = 0;
     this.q = qFromEuler(heading, 0, 0);
     this.thrust = 1;
     s.ground = 0;
@@ -268,11 +281,14 @@ export class Drone {
     const maxAlt = s.ground + TUNE.maxAGL;
     if (s.alt > maxAlt) { s.alt = maxAlt; if (s.vU > 0) s.vU = 0; }
 
-    // --- impact shake ---
+    // --- impact shake, frame vibration under load, prop-wash wobble when sinking through our own wash ---
     s.impact *= Math.exp(-dt * 3.5);
     const shake = s.impact * s.impact;
-    s.roll += Math.sin(now * 0.061) * shake * 9;
-    s.camPitch = Math.max(5, Math.min(this.camTiltMax, s.camPitch + Math.sin(now * 0.047) * shake * 6));
+    const physicsMode = s.mode !== 'cine';
+    const vib = physicsMode ? 0.08 + s.motor * 0.18 : 0;
+    const wash = physicsMode && s.vU < -2.5 && this.thrust < 1.3 ? Math.min(1, (-s.vU - 2.5) / 10) * 2.2 : 0;
+    s.roll += Math.sin(now * 0.061) * shake * 9 + Math.sin(now * 0.37) * vib + Math.sin(now * 0.023 + 1) * wash;
+    s.camPitch = Math.max(5, Math.min(this.camTiltMax, s.camPitch + Math.sin(now * 0.047) * shake * 6 + Math.sin(now * 0.29 + 2) * vib + Math.sin(now * 0.019) * wash));
 
     // --- telemetry ---
     const spd = Math.hypot(s.vE, s.vN);
@@ -294,9 +310,9 @@ export class Drone {
     if (s.mode === 'acro') {
       // binary keys at full rate are uncontrollable; real sticks get full Betaflight-like rates
       const k = (boost ? 1.15 : 1) * (c.source === 'keyboard' ? 0.45 : 1);
-      const p = shape(c.pitch, TUNE.acroRate * k, TUNE.acroExpo); // nose-down rate
-      const r = shape(c.roll, TUNE.acroRate * k, TUNE.acroExpo);
-      const y = shape(c.yaw, TUNE.acroYaw * k, TUNE.acroExpo * 0.8);
+      const p = bfRate(c.pitch, TUNE.rcRate, TUNE.superRate, TUNE.rcExpo) * k; // nose-down rate
+      const r = bfRate(c.roll, TUNE.rcRate, TUNE.superRate, TUNE.rcExpo) * k;
+      const y = bfRate(c.yaw, TUNE.yawRcRate, TUNE.yawSuperRate, TUNE.yawExpo) * k;
       // body-frame rates: nose-down = -x, right roll = +y, right yaw = -z
       const w: V = [-p * deg, r * deg, -y * deg];
       const mag = Math.hypot(w[0], w[1], w[2]);
@@ -337,7 +353,9 @@ export class Drone {
     s.heading = cam.heading;
     s.roll = cam.roll;
     s.bodyPitch = e.pitchDown;
-    s.camPitch = Math.max(5, Math.min(this.camTiltMax, 90 - cam.pitchDown));
+    const want = 90 - cam.pitchDown;
+    s.camPitch = Math.max(5, Math.min(this.camTiltMax, want));
+    s.lookUp = Math.max(0, Math.min(TUNE.maxLookUp, want - this.camTiltMax));
 
     const load = this.thrust / tMax;
     s.motor += (Math.min(1, 0.15 + load * 1.1) - s.motor) * Math.min(1, dt * 10);
@@ -378,6 +396,7 @@ export class Drone {
     const bankTarget = c.roll * TUNE.rollGain + this.yawVel * TUNE.yawRollGain * Math.min(1, spd / 8 + 0.35);
     s.roll += (bankTarget - s.roll) * k;
     s.camPitch = Math.max(5, Math.min(this.camTiltMax, s.camTilt - s.bodyPitch));
+    s.lookUp = 0;
     this.q = qFromEuler(s.heading, 0, 0);
 
     const effort = Math.min(1, 0.28 + (Math.abs(c.pitch) + Math.abs(c.roll)) * 0.3 + Math.max(0, c.throttle) * 0.5 + Math.abs(c.yaw) * 0.1);

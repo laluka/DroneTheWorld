@@ -9,7 +9,7 @@ import { search, reverse, type GeoResult } from './geocode';
 import { MapLibreEngine } from './engine/maplibre';
 import type { Engine } from './engine/types';
 import { Discoveries, summary, type Poi } from './discover';
-import { Calibrator, STEP_TEXT, AXIS_NAMES, clearMap, saveMap, type GamepadMap } from './gamepad';
+import { Calibrator, STEP_TEXT, STEPS, AXIS_NAMES, clearMap, saveMap, loadMap, type GamepadMap } from './gamepad';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -127,6 +127,11 @@ function frame(now: number) {
   if (!flying || !mapReady) return;
 
   const c = input.poll(dt, now);
+  if (input.padModeRequest) {
+    const r = input.padModeRequest; input.padModeRequest = null;
+    const next = r === 'cycle' ? FLIGHT_MODES[(FLIGHT_MODES.indexOf(settings.flightMode) + 1) % FLIGHT_MODES.length] : r;
+    if (next !== settings.flightMode) setFlightMode(next);
+  }
   lastSource = c.source !== 'none' ? c.source : lastSource;
   if (now - lastSrcUpdate > 300) { lastSrcUpdate = now; hud.setSource(input.padId && now - input.padLastActive < 3000 ? 'gamepad' : lastSource); }
   drone.step(dt, c, switching ? null : probe, now);
@@ -429,7 +434,7 @@ function syncPadUi() {
   if (id !== padUiId) {
     padUiId = id;
     if (id && m) {
-      const learned = Object.keys(m.axes).length === 4 && localStorage.getItem('drone.gamepads')?.includes(id);
+      const learned = !!loadMap(id)?.calibrated;
       padStatus.textContent = `${id.replace(/\s*\(.*$/, '').slice(0, 48)} · ${learned ? 'calibrated' : 'default mapping, calibrate if sticks feel wrong'}`;
       padStatus.classList.add('ok');
       dzEl.value = String(Math.round(m.deadzone * 100));
@@ -452,7 +457,16 @@ function padUiTick() {
   requestAnimationFrame(padUiTick);
 }
 requestAnimationFrame(padUiTick);
-window.addEventListener('gamepadconnected', () => { padUiId = null; syncPadUi(); hud.toast('CONTROLLER CONNECTED'); });
+window.addEventListener('gamepadconnected', (e) => {
+  padUiId = null; syncPadUi();
+  const id = (e as GamepadEvent).gamepad.id;
+  // Unknown controller: stick layouts differ a lot between vendors, so walk the player through calibration first.
+  if (!loadMap(id)?.calibrated) {
+    hud.toast('NEW CONTROLLER · LET\'S MAP YOUR STICKS', 3000);
+    if (menu.classList.contains('hidden')) openMenu();
+    setTimeout(startCalibration, 300);
+  } else hud.toast('CONTROLLER CONNECTED');
+});
 window.addEventListener('gamepaddisconnected', () => { padUiId = null; syncPadUi(); });
 
 const tune = (el: HTMLInputElement, key: 'deadzone' | 'expo', out: string) => el.addEventListener('input', () => {
@@ -469,7 +483,7 @@ const calibEl = $('calib');
 const calibAxes = $('calib-axes');
 function renderCalib(pad: Gamepad) {
   if (!calib) return;
-  const steps = ['rest', 'throttle', 'yaw', 'pitch', 'roll', 'turbo'];
+  const steps: string[] = STEPS.filter((x) => x !== 'done');
   const idx = steps.indexOf(calib.step);
   $('calib-step').textContent = calib.step === 'done' ? 'COMPLETE' : `STEP ${idx + 1} / ${steps.length}`;
   $('calib-title').textContent = STEP_TEXT[calib.step].title;
@@ -483,7 +497,7 @@ function renderCalib(pad: Gamepad) {
 }
 function startCalibration() {
   const pad = input.pad();
-  if (!pad) return;
+  if (!pad || calib) return;
   calib = new Calibrator(pad, null);
   calibEl.classList.remove('hidden');
   input.padPassthrough = (p) => { calib!.update(p, performance.now()); renderCalib(p); };

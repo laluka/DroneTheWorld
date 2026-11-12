@@ -103,6 +103,9 @@ export class Input {
   padLive: Record<AxisName, number> = { throttle: 0, yaw: 0, pitch: 0, roll: 0 };
   padId: string | null = null;
   padLastActive = 0;
+  /** Flight-mode request from the controller switch: a mode name, 'cycle' for a button, or null. Read & cleared by the app. */
+  padModeRequest: 'angle' | 'acro' | 'cine' | 'cycle' | null = null;
+  private switchPrev: number | null = null;
   /** Set during calibration so normal reading is bypassed. */
   padPassthrough: ((pad: Gamepad) => void) | null = null;
 
@@ -169,7 +172,7 @@ export class Input {
     if (!m) { m = loadMap(id) ?? defaultMap(id); this.mapCache.set(id, m); }
     return m;
   }
-  setMap(m: GamepadMap) { this.mapCache.set(m.id, m); }
+  setMap(m: GamepadMap) { this.mapCache.set(m.id, m); this.switchPrev = null; }
   invalidateMap(id: string) { this.mapCache.delete(id); }
 
   private key(...codes: string[]) {
@@ -191,6 +194,19 @@ export class Input {
       c[name] += v;
     }
     if (m.turboButton !== null && p.buttons[m.turboButton]?.pressed) { c.boost = true; active = true; }
+    if (m.modeSwitch) {
+      const sw = m.modeSwitch;
+      if (sw.kind === 'button') {
+        const v = p.buttons[sw.index]?.pressed ? 1 : 0;
+        if (this.switchPrev === 0 && v === 1) this.padModeRequest = 'cycle';
+        this.switchPrev = v;
+      } else {
+        const raw = p.axes[sw.index] ?? 0;
+        const pos = raw < -0.33 ? 0 : raw > 0.33 ? 2 : 1;
+        if (this.switchPrev !== pos) this.padModeRequest = (['angle', 'cine', 'acro'] as const)[pos];
+        this.switchPrev = pos;
+      }
+    }
     // d-pad camera tilt on standard pads
     c.gimbal += (p.buttons[12]?.pressed ? 1 : 0) - (p.buttons[13]?.pressed ? 1 : 0);
     if (active) { this.padLastActive = now; c.source = 'gamepad'; }

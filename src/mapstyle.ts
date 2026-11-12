@@ -53,6 +53,9 @@ const LIGHTS: Record<StyleId, LightSpecification> = {
   night: { anchor: 'map', color: '#8fb4ff', intensity: 0.4, position: [1.3, 150, 45] },
 };
 
+/** Sky colour right above the horizon; also painted behind the map so a lens-shifted view has no gap. */
+export const horizonColor = (id: StyleId) => SKIES[id]['horizon-color'] as string;
+
 function buildingsLayer(id: StyleId): LayerSpecification {
   const color =
     id === 'night'

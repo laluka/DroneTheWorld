@@ -7,14 +7,35 @@ export interface GamepadMap {
   id: string;
   axes: Partial<Record<AxisName, AxisMap>>;
   turboButton: number | null;
+  /** optional flight-mode switch: a button cycles modes, an axis selects by position */
+  modeSwitch?: { kind: 'button' | 'axis'; index: number } | null;
+  /** true once the user ran the calibration wizard for this controller */
+  calibrated?: boolean;
   deadzone: number;
   expo: number;
 }
 
 const KEY = 'drone.gamepads';
 
-/** Xbox-style default (mode 2): left stick throttle/yaw, right stick pitch/roll. */
+export const isDji = (id: string) => /dji|2ca3/i.test(id);
+
+/** Default mapping before calibration. DJI remotes report roll, pitch, throttle, yaw on axes 0..3 (up/right positive). */
 export function defaultMap(id: string): GamepadMap {
+  if (isDji(id)) {
+    return {
+      id,
+      axes: {
+        roll: { axis: 0, sign: 1, rest: 0 },
+        pitch: { axis: 1, sign: 1, rest: 0 },
+        throttle: { axis: 2, sign: 1, rest: 0 },
+        yaw: { axis: 3, sign: 1, rest: 0 },
+      },
+      turboButton: null,
+      deadzone: 0.04,
+      expo: 0,
+    };
+  }
+  // Xbox-style (mode 2): left stick throttle/yaw, right stick pitch/roll
   return {
     id,
     axes: {
@@ -53,8 +74,8 @@ export function readAxis(pad: Gamepad, m: GamepadMap, name: AxisName): number {
   return v * (1 - m.expo) + v * v * v * m.expo;
 }
 
-export type CalibStep = 'rest' | AxisName | 'turbo' | 'done';
-const STEPS: CalibStep[] = ['rest', 'throttle', 'yaw', 'pitch', 'roll', 'turbo', 'done'];
+export type CalibStep = 'rest' | AxisName | 'turbo' | 'switch' | 'done';
+export const STEPS: CalibStep[] = ['rest', 'throttle', 'yaw', 'pitch', 'roll', 'turbo', 'switch', 'done'];
 
 export const STEP_TEXT: Record<CalibStep, { title: string; hint: string }> = {
   rest: { title: 'Leave both sticks at rest', hint: 'Throttle at hover position (center for DJI N/S modes, mid-stick in M mode).' },
@@ -63,6 +84,7 @@ export const STEP_TEXT: Record<CalibStep, { title: string; hint: string }> = {
   pitch: { title: 'Push PITCH forward', hint: 'Then let it return to rest.' },
   roll: { title: 'Push ROLL right', hint: 'Then let it return to rest.' },
   turbo: { title: 'Press the button to use for TURBO', hint: 'Optional: any button, or skip.' },
+  switch: { title: 'Flip your FLIGHT MODE switch', hint: 'Optional: a switch or button. Positions pick Angle / Cine / Acro, a button cycles them. Or skip.' },
   done: { title: 'Controller mapped', hint: 'Settings saved for this controller.' },
 };
 
@@ -77,7 +99,7 @@ export class Calibrator {
   private used = new Set<number>();
 
   constructor(pad: Gamepad, base?: GamepadMap | null) {
-    this.map = { ...(base ?? defaultMap(pad.id)), id: pad.id, axes: {} };
+    this.map = { ...(base ?? defaultMap(pad.id)), id: pad.id, axes: {}, turboButton: null, modeSwitch: null, calibrated: true };
   }
 
   skip() {
@@ -110,13 +132,21 @@ export class Calibrator {
       return;
     }
 
-    // require sticks back near rest between steps
+    // require sticks back near rest between steps (only the axes learned so far plus unlearned ones; a flipped switch may stay put)
     const atRest = axes.every((v, i) => Math.abs(v - (this.rest[i] ?? 0)) < 0.25);
     if (this.waitReturn) { if (atRest) this.waitReturn = false; return; }
 
     if (this.step === 'turbo') {
       const idx = pad.buttons.findIndex((b) => b.pressed);
       if (idx >= 0) { this.map.turboButton = idx; this.advance(); }
+      return;
+    }
+
+    if (this.step === 'switch') {
+      const idx = pad.buttons.findIndex((b, i) => b.pressed && i !== this.map.turboButton);
+      if (idx >= 0) { this.map.modeSwitch = { kind: 'button', index: idx }; this.advance(); return; }
+      const ax = axes.findIndex((v, i) => !this.used.has(i) && Math.abs(v - (this.rest[i] ?? 0)) > 0.5);
+      if (ax >= 0) { this.map.modeSwitch = { kind: 'axis', index: ax }; this.advance(); }
       return;
     }
 

@@ -4,9 +4,13 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import type { Engine, Surface } from './types';
 import { BuildingField } from '../buildings';
 import type { DroneState } from '../drone';
-import { buildStyle, type StyleId } from '../mapstyle';
+import { buildStyle, horizonColor, type StyleId } from '../mapstyle';
 
 setWorkerUrl(workerUrl);
+
+/** Screen offset (px) that emulates tilting the camera up by `deg` beyond the renderer's pitch limit. */
+export const lensShiftPx = (deg: number, height: number, vfov: number) =>
+  deg > 0 ? (height / 2 / Math.tan((vfov * Math.PI) / 360)) * Math.tan((deg * Math.PI) / 180) : 0;
 
 /** Free, keyless engine: OpenFreeMap vectors + Esri imagery + AWS terrain, buildings extruded from OSM heights. */
 export class MapLibreEngine implements Engine {
@@ -52,6 +56,7 @@ export class MapLibreEngine implements Engine {
     this.styleLoading = true;
     try {
       const style = await buildStyle(id, quality);
+      this.container.style.background = horizonColor(id);
       this.map.setStyle(style, { diff: false });
       await new Promise<void>((res) => this.map.once('style.load', () => res()));
       this.applyCameraTuning();
@@ -73,7 +78,11 @@ export class MapLibreEngine implements Engine {
     if (!this._ready) return;
     try {
       const opts = this.map.calculateCameraOptionsFromCameraLngLatAltRotation([s.lng, s.lat], s.alt, s.heading, s.camPitch, s.roll);
-      this.map.jumpTo(opts);
+      // MapLibre can't pitch above the horizon; looking higher is rendered as a lens shift along the camera's down axis.
+      const shift = lensShiftPx(s.lookUp, this.container.clientHeight, this.vfov);
+      const dx = shift * Math.sin(s.roll * Math.PI / 180), dy = shift * Math.cos(s.roll * Math.PI / 180);
+      const padding = { left: Math.max(0, 2 * dx), right: Math.max(0, -2 * dx), top: Math.max(0, 2 * dy), bottom: Math.max(0, -2 * dy) };
+      this.map.jumpTo({ ...opts, padding });
     } catch { /* transient during style swap */ }
   }
 
