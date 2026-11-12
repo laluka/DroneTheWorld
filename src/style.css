@@ -163,9 +163,11 @@ a { color: inherit; }
 .preset small { position: relative; display: block; color: rgba(255,255,255,0.7); font-size: 12px; margin-top: 2px; letter-spacing: 0.06em; }
 .preset i { position: relative; display: block; margin-top: 8px; font-style: normal; font-family: var(--font-mono); font-size: 10px; color: rgba(255,255,255,0.55); }
 
-.options { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+.options { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px 28px; }
+.options .opt { min-width: 0; }
+.options .opt.wide { grid-column: 1 / -1; }
 .options .section-title { margin-top: 20px; }
-.seg { display: inline-flex; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 4px; gap: 4px; }
+.seg { display: inline-flex; flex-wrap: wrap; max-width: 100%; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 4px; gap: 4px; }
 .seg button { padding: 8px 14px; background: transparent; color: var(--dim); font-weight: 600; letter-spacing: 0.06em; }
 .seg button.active { background: rgba(125,249,201,0.16); color: var(--accent); }
 .seg button.pro { color: var(--accent-2); }
@@ -179,6 +181,38 @@ a { color: inherit; }
 .key-row p { grid-column: 1 / -1; margin: 0; font-size: 12px; color: var(--dim); line-height: 1.5; }
 .key-row p.err { color: var(--danger); }
 .key-row p.err:empty { display: none; }
+
+.pad { display: flex; flex-direction: column; gap: 10px; }
+.pad-status { font-size: 12px; color: var(--dim); letter-spacing: 0.04em; }
+.pad-status.ok { color: var(--accent); }
+.pad-meters { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.pad-meters label { display: block; font-size: 9px; letter-spacing: 0.2em; color: var(--dim); margin-bottom: 4px; }
+.meter { position: relative; height: 8px; border-radius: 4px; background: rgba(255,255,255,0.08); overflow: hidden; }
+.meter::before { content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,0.25); }
+.meter i { position: absolute; top: 0; bottom: 0; left: 50%; width: 0; background: var(--accent); transition: none; }
+.pad-actions { display: flex; gap: 8px; }
+button.small { font: 700 12px var(--font-ui); letter-spacing: 0.1em; padding: 8px 14px; border-radius: 10px; border: 1px solid transparent; background: var(--accent); color: #06130e; cursor: pointer; }
+button.small.ghost { background: transparent; color: var(--fg); border-color: rgba(255,255,255,0.18); }
+button.small:disabled { opacity: 0.4; cursor: default; }
+.slider { display: grid; grid-template-columns: 70px 1fr 44px; align-items: center; gap: 8px; font-size: 10px; letter-spacing: 0.2em; color: var(--dim); text-transform: uppercase; }
+.slider input { width: 100%; accent-color: var(--accent); }
+.slider b { font: 500 11px var(--font-mono); color: var(--fg); text-align: right; }
+.opt-note { margin: 8px 0 0; font-size: 12px; color: var(--dim); }
+.chip.dim { border-color: rgba(255,255,255,0.3); color: rgba(255,255,255,0.6); }
+.chip.rc { border-color: var(--accent); color: var(--accent); }
+
+#calib { position: fixed; inset: 0; z-index: 12; display: flex; align-items: center; justify-content: center; background: rgba(7,11,16,0.9); backdrop-filter: blur(10px); }
+.calib-box { width: min(560px, 92vw); padding: 32px; border-radius: 18px; border: 1px solid rgba(125,249,201,0.25); background: rgba(10,16,22,0.9); text-align: center; }
+.calib-step { font: 500 11px var(--font-mono); letter-spacing: 0.3em; color: var(--dim); }
+.calib-box h2 { margin: 10px 0 6px; font-size: 28px; letter-spacing: 0.06em; color: var(--accent); }
+.calib-box p { margin: 0 0 18px; color: var(--dim); }
+.calib-axes { display: grid; grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: 6px; margin-bottom: 20px; }
+.calib-axes div { font: 500 10px var(--font-mono); color: var(--dim); }
+.calib-axes .meter { margin-top: 3px; }
+.calib-axes .meter i { background: var(--accent-2); }
+.calib-actions { display: flex; gap: 10px; justify-content: center; }
+.calib-actions button { font: 700 13px var(--font-ui); letter-spacing: 0.12em; padding: 10px 18px; border-radius: 10px; cursor: pointer; border: 1px solid rgba(255,255,255,0.18); background: transparent; color: var(--fg); }
+.calib-actions button.primary { background: var(--accent); color: #06130e; border-color: transparent; }
 
 .actions { display: flex; gap: 12px; margin-top: 26px; flex-wrap: wrap; }
 .actions .primary { padding: 14px 28px; background: var(--accent); color: #06130e; }

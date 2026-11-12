@@ -25,7 +25,7 @@
       </div>
       <div class="hud-tr panel">
         <div class="row"><span class="rec"><i></i>REC</span><span class="mono" id="hud-clock">00:00</span></div>
-        <div class="row small"><span id="hud-mode" class="chip">ACRO</span><span class="mono" id="hud-fps">60 FPS</span></div>
+        <div class="row small"><span id="hud-mode" class="chip">ACRO</span><span id="hud-src" class="chip dim">KB</span><span class="mono" id="hud-fps">60 FPS</span></div>
         <div class="row small"><span class="bat"><i id="hud-bat-fill"></i></span><span class="mono" id="hud-volt">16.8V</span><span class="mono" id="hud-bat">100%</span></div>
       </div>
       <div class="hud-warn mono" id="hud-warn"></div>
@@ -82,7 +82,7 @@
         <div id="presets" class="presets"></div>
 
         <div class="options">
-          <div class="opt">
+          <div class="opt wide">
             <div class="section-title">Map</div>
             <div class="seg" id="style-seg">
               <button data-style="satellite" class="active">Satellite</button>
@@ -101,6 +101,29 @@
               </div>
               <label id="volume-wrap" class="volume disabled"><span>VOL</span><input id="volume" type="range" min="0" max="100" value="40" /></label>
             </div>
+          </div>
+          <div class="opt">
+            <div class="section-title">Controller</div>
+            <div class="pad">
+              <div class="pad-status" id="pad-status">No controller detected · press any button on it</div>
+              <div class="pad-meters" id="pad-meters">
+                <div><label>THR</label><div class="meter"><i data-axis="throttle"></i></div></div>
+                <div><label>YAW</label><div class="meter"><i data-axis="yaw"></i></div></div>
+                <div><label>PIT</label><div class="meter"><i data-axis="pitch"></i></div></div>
+                <div><label>ROL</label><div class="meter"><i data-axis="roll"></i></div></div>
+              </div>
+              <div class="pad-actions">
+                <button id="pad-calibrate" class="small" disabled>Calibrate sticks</button>
+                <button id="pad-reset" class="small ghost" disabled>Reset</button>
+              </div>
+              <label class="slider"><span>Deadzone</span><input id="pad-deadzone" type="range" min="0" max="30" value="8" /><b id="pad-deadzone-v">8%</b></label>
+              <label class="slider"><span>Expo</span><input id="pad-expo" type="range" min="0" max="80" value="30" /><b id="pad-expo-v">30%</b></label>
+            </div>
+          </div>
+          <div class="opt">
+            <div class="section-title">Keyboard</div>
+            <label class="slider"><span>Rates</span><input id="key-rates" type="range" min="40" max="160" value="100" /><b id="key-rates-v">100%</b></label>
+            <p class="opt-note">Keys ramp like a stick. Rates scale yaw and throttle response.</p>
           </div>
           <div class="opt">
             <div class="section-title">Quality</div>
@@ -140,7 +163,8 @@
             <div><kbd>P</kbd> <em>screenshot</em></div>
             <div><kbd>F</kbd> <em>fullscreen</em></div>
             <div><kbd>Esc</kbd> <em>menu</em></div>
-            <div>🎮 <em>gamepad (mode 2)</em> · 📱 <em>touch sticks</em></div>
+            <div>🎮 <em>any gamepad / DJI RC over USB, calibrate in Controller</em></div>
+            <div>📱 <em>touch sticks on phones</em></div>
           </div>
         </details>
 
@@ -150,6 +174,19 @@
       </div>
     </div>
 
+    <div id="calib" class="hidden">
+      <div class="calib-box">
+        <div class="calib-step" id="calib-step">1 / 6</div>
+        <h2 id="calib-title">Leave both sticks at rest</h2>
+        <p id="calib-hint"></p>
+        <div class="calib-axes" id="calib-axes"></div>
+        <div class="calib-actions">
+          <button id="calib-skip" class="ghost">Skip step</button>
+          <button id="calib-cancel" class="ghost">Cancel</button>
+          <button id="calib-done" class="primary hidden">Done</button>
+        </div>
+      </div>
+    </div>
     <div id="fade"></div>
     <div id="loading"><div class="spinner"></div><span>Loading tiles…</span></div>
     <script type="module" src="/src/main.ts"></script>

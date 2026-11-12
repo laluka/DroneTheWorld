@@ -10,7 +10,7 @@ export class Hud {
     loc: $('hud-loc'), lat: $('hud-lat'), lng: $('hud-lng'), clock: $('hud-clock'), mode: $('hud-mode'), fps: $('hud-fps'),
     bat: $('hud-bat'), batFill: $('hud-bat-fill'), agl: $('hud-agl'), msl: $('hud-msl'), vs: $('hud-vs'),
     spd: $('hud-spd'), hdg: $('hud-hdg'), dist: $('hud-dist'), toast: $('toast'), hud: $('hud'),
-    thr: $('hud-thr'), thrFill: $('hud-thr-fill'), warn: $('hud-warn'), volt: $('hud-volt'),
+    thr: $('hud-thr'), thrFill: $('hud-thr-fill'), warn: $('hud-warn'), volt: $('hud-volt'), src: $('hud-src'),
   };
   private lastText = 0;
   private fpsAcc = 0;
@@ -46,6 +46,13 @@ export class Hud {
     this.visible = force ?? !this.visible;
     this.el.hud.classList.toggle('hidden', !this.visible);
     this.canvas.style.display = this.visible ? '' : 'none';
+  }
+
+  setSource(src: 'keyboard' | 'gamepad' | 'touch' | 'none') {
+    const rc = src === 'gamepad';
+    this.el.src.textContent = rc ? 'RC' : src === 'touch' ? 'TOUCH' : 'KB';
+    this.el.src.classList.toggle('rc', rc);
+    this.el.src.classList.toggle('dim', !rc);
   }
 
   update(s: DroneState, dt: number, now: number) {

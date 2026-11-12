@@ -8,6 +8,7 @@ import { DroneAudio } from './audio';
 import { search, reverse, type GeoResult } from './geocode';
 import { MapLibreEngine } from './engine/maplibre';
 import type { Engine } from './engine/types';
+import { Calibrator, STEP_TEXT, AXIS_NAMES, clearMap, saveMap, type GamepadMap } from './gamepad';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -15,8 +16,8 @@ export type ViewId = StyleId | 'photoreal';
 const VIEW_IDS: ViewId[] = [...STYLE_IDS, 'photoreal'];
 
 // ---------- settings (persisted) ----------
-interface Settings { style: ViewId; sound: boolean; volume: number; quality: 'high' | 'low'; googleKey: string; }
-const DEFAULTS: Settings = { style: 'satellite', sound: false, volume: 0.4, quality: 'high', googleKey: '' };
+interface Settings { style: ViewId; sound: boolean; volume: number; quality: 'high' | 'low'; googleKey: string; keyRates: number; }
+const DEFAULTS: Settings = { style: 'satellite', sound: false, volume: 0.4, quality: 'high', googleKey: '', keyRates: 1 };
 const settings: Settings = (() => {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('drone.settings') || '{}') }; }
   catch { return { ...DEFAULTS }; }
@@ -37,6 +38,8 @@ let lastReverse = { t: 0, lng: 0, lat: 0 };
 let lastHashWrite = 0;
 let switching = false;
 let keyRowOpen = false;
+let lastSource: 'keyboard' | 'gamepad' | 'touch' | 'none' = 'keyboard';
+let lastSrcUpdate = 0;
 
 // ---------- engines ----------
 const maplibre = new MapLibreEngine($('map'), settings.quality, [drone.s.lng, drone.s.lat]);
@@ -114,7 +117,9 @@ function frame(now: number) {
   last = now;
   if (!flying || !mapReady) return;
 
-  const c = input.poll();
+  const c = input.poll(dt, now);
+  lastSource = c.source !== 'none' ? c.source : lastSource;
+  if (now - lastSrcUpdate > 300) { lastSrcUpdate = now; hud.setSource(input.padId && now - input.padLastActive < 3000 ? 'gamepad' : lastSource); }
   const ground = switching ? null : engine.groundElevation(drone.s.lng, drone.s.lat);
   drone.step(dt, c, ground, now);
   engine.setCamera(drone.s);
@@ -313,9 +318,115 @@ function setView(v: ViewId) {
 }
 syncSeg();
 
+// ---------- controller (gamepad / DJI RC) ----------
+input.keyRates = settings.keyRates;
+const ratesEl = $('key-rates') as HTMLInputElement;
+ratesEl.value = String(Math.round(settings.keyRates * 100));
+$('key-rates-v').textContent = `${ratesEl.value}%`;
+ratesEl.addEventListener('input', () => { settings.keyRates = +ratesEl.value / 100; input.keyRates = settings.keyRates; $('key-rates-v').textContent = `${ratesEl.value}%`; saveSettings(); });
+
+const padStatus = $('pad-status');
+const padMeters = Array.from($('pad-meters').querySelectorAll<HTMLElement>('i[data-axis]'));
+const dzEl = $('pad-deadzone') as HTMLInputElement;
+const expoEl = $('pad-expo') as HTMLInputElement;
+let calib: Calibrator | null = null;
+let padUiId: string | null = null;
+
+function setMeter(el: HTMLElement, v: number) {
+  const pct = Math.max(-1, Math.min(1, v)) * 50;
+  el.style.left = `${50 + Math.min(0, pct)}%`;
+  el.style.width = `${Math.abs(pct)}%`;
+}
+function currentMap(): GamepadMap | null { return input.padId ? input.mapFor(input.padId) : null; }
+function syncPadUi() {
+  const id = input.padId;
+  const m = currentMap();
+  ($('pad-calibrate') as HTMLButtonElement).disabled = !id;
+  ($('pad-reset') as HTMLButtonElement).disabled = !id;
+  if (id !== padUiId) {
+    padUiId = id;
+    if (id && m) {
+      const learned = Object.keys(m.axes).length === 4 && localStorage.getItem('drone.gamepads')?.includes(id);
+      padStatus.textContent = `${id.replace(/\s*\(.*$/, '').slice(0, 48)} · ${learned ? 'calibrated' : 'default mapping, calibrate if sticks feel wrong'}`;
+      padStatus.classList.add('ok');
+      dzEl.value = String(Math.round(m.deadzone * 100));
+      expoEl.value = String(Math.round(m.expo * 100));
+      $('pad-deadzone-v').textContent = `${dzEl.value}%`;
+      $('pad-expo-v').textContent = `${expoEl.value}%`;
+    } else {
+      padStatus.textContent = 'No controller detected · plug it in over USB and press any button';
+      padStatus.classList.remove('ok');
+    }
+  }
+}
+function padUiTick() {
+  // Poll while the menu is open so meters move even when not flying.
+  if (!menu.classList.contains('hidden') && !calib) {
+    input.poll(1 / 30, performance.now());
+    syncPadUi();
+    for (const el of padMeters) setMeter(el, input.padLive[el.dataset.axis as keyof typeof input.padLive]);
+  }
+  requestAnimationFrame(padUiTick);
+}
+requestAnimationFrame(padUiTick);
+window.addEventListener('gamepadconnected', () => { padUiId = null; syncPadUi(); hud.toast('CONTROLLER CONNECTED'); });
+window.addEventListener('gamepaddisconnected', () => { padUiId = null; syncPadUi(); });
+
+const tune = (el: HTMLInputElement, key: 'deadzone' | 'expo', out: string) => el.addEventListener('input', () => {
+  const m = currentMap(); if (!m) return;
+  m[key] = +el.value / 100; $(out).textContent = `${el.value}%`;
+  input.setMap(m); saveMap(m);
+});
+tune(dzEl, 'deadzone', 'pad-deadzone-v');
+tune(expoEl, 'expo', 'pad-expo-v');
+
+$('pad-reset').addEventListener('click', () => { if (!input.padId) return; clearMap(input.padId); input.invalidateMap(input.padId); padUiId = null; syncPadUi(); hud.toast('MAPPING RESET'); });
+
+const calibEl = $('calib');
+const calibAxes = $('calib-axes');
+function renderCalib(pad: Gamepad) {
+  if (!calib) return;
+  const steps = ['rest', 'throttle', 'yaw', 'pitch', 'roll', 'turbo'];
+  const idx = steps.indexOf(calib.step);
+  $('calib-step').textContent = calib.step === 'done' ? 'COMPLETE' : `STEP ${idx + 1} / ${steps.length}`;
+  $('calib-title').textContent = STEP_TEXT[calib.step].title;
+  $('calib-hint').textContent = STEP_TEXT[calib.step].hint;
+  $('calib-done').classList.toggle('hidden', calib.step !== 'done');
+  $('calib-skip').classList.toggle('hidden', calib.step === 'done' || calib.step === 'rest');
+  if (calibAxes.children.length !== pad.axes.length) {
+    calibAxes.innerHTML = pad.axes.map((_, i) => `<div>AX${i}<div class="meter"><i></i></div></div>`).join('');
+  }
+  pad.axes.forEach((v, i) => setMeter(calibAxes.children[i].querySelector('i')!, v));
+}
+function startCalibration() {
+  const pad = input.pad();
+  if (!pad) return;
+  calib = new Calibrator(pad, null);
+  calibEl.classList.remove('hidden');
+  input.padPassthrough = (p) => { calib!.update(p, performance.now()); renderCalib(p); };
+  const tick = () => { if (!calib) return; input.poll(1 / 60, performance.now()); requestAnimationFrame(tick); };
+  requestAnimationFrame(tick);
+}
+function endCalibration(save: boolean) {
+  if (calib && save && calib.step === 'done') {
+    const m = calib.map;
+    for (const n of AXIS_NAMES) if (!m.axes[n]) hud.toast(`AXIS ${n.toUpperCase()} NOT MAPPED`, 2500);
+    saveMap(m); input.setMap(m);
+    hud.toast('CONTROLLER CALIBRATED');
+  }
+  calib = null;
+  input.padPassthrough = null;
+  calibEl.classList.add('hidden');
+  padUiId = null; syncPadUi();
+}
+$('pad-calibrate').addEventListener('click', startCalibration);
+$('calib-skip').addEventListener('click', () => calib?.skip());
+$('calib-cancel').addEventListener('click', () => endCalibration(false));
+$('calib-done').addEventListener('click', () => endCalibration(true));
+
 // ---------- keys ----------
 input.onKey = (code, ev) => {
-  if (code === 'Escape') { if (menu.classList.contains('hidden')) openMenu(); else resume(); return; }
+  if (code === 'Escape') { if (calib) { endCalibration(false); return; } if (menu.classList.contains('hidden')) openMenu(); else resume(); return; }
   if (!flying) return;
   switch (code) {
     case 'KeyM': setView(VIEW_IDS[(VIEW_IDS.indexOf(settings.style) + 1) % (googleKey() ? VIEW_IDS.length : STYLE_IDS.length)]); break;

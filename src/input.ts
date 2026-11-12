@@ -1,3 +1,5 @@
+import { AXIS_NAMES, defaultMap, loadMap, readAxis, type AxisName, type GamepadMap } from './gamepad';
+
 /** Aggregates keyboard, mouse, touch sticks and gamepad into one per-frame control frame. */
 export interface Controls {
   /** -1..1, forward positive */
@@ -8,7 +10,7 @@ export interface Controls {
   throttle: number;
   /** -1..1, clockwise positive */
   yaw: number;
-  /** -1..1 gimbal tilt (up positive), keyboard only */
+  /** -1..1 camera tilt (up positive), keyboard only */
   gimbal: number;
   boost: boolean;
   /** accumulated look delta in pixels since last frame */
@@ -16,6 +18,8 @@ export interface Controls {
   lookDY: number;
   /** accumulated wheel delta since last frame */
   wheel: number;
+  /** which device produced the dominant stick input this frame */
+  source: 'keyboard' | 'gamepad' | 'touch' | 'none';
 }
 
 type KeyHandler = (code: string, ev: KeyboardEvent) => void;
@@ -56,13 +60,21 @@ class VirtualStick {
     let dy = e.clientY - (r.top + r.height / 2);
     const len = Math.hypot(dx, dy);
     const max = this.radius * 0.8;
-    if (len > max) {
-      dx = (dx / len) * max;
-      dy = (dy / len) * max;
-    }
+    if (len > max) { dx = (dx / len) * max; dy = (dy / len) * max; }
     this.x = dx / max;
     this.y = -dy / max;
     this.knob.style.transform = `translate(${dx}px, ${dy}px)`;
+  }
+}
+
+/** Keyboard keys are binary; ramp them so they feel like a stick (rise ~120 ms, release ~70 ms). */
+class Ramp {
+  v = 0;
+  update(target: number, dt: number) {
+    const tau = Math.abs(target) > Math.abs(this.v) ? 0.12 : 0.07;
+    this.v += (target - this.v) * Math.min(1, dt / tau);
+    if (Math.abs(this.v) < 0.002) this.v = 0;
+    return this.v;
   }
 }
 
@@ -77,10 +89,22 @@ export class Input {
   private lastY = 0;
   private stickL?: VirtualStick;
   private stickR?: VirtualStick;
+  private ramps = { pitch: new Ramp(), roll: new Ramp(), yaw: new Ramp(), throttle: new Ramp() };
   touchBoost = false;
   enabled = true;
+  /** Keyboard sensitivity multiplier for yaw/throttle (menu "rates"). */
+  keyRates = 1;
   onKey: KeyHandler | null = null;
   readonly isTouch: boolean;
+
+  // gamepad
+  private mapCache = new Map<string, GamepadMap>();
+  /** Last live readings per axis for the menu meters. */
+  padLive: Record<AxisName, number> = { throttle: 0, yaw: 0, pitch: 0, roll: 0 };
+  padId: string | null = null;
+  padLastActive = 0;
+  /** Set during calibration so normal reading is bypassed. */
+  padPassthrough: ((pad: Gamepad) => void) | null = null;
 
   constructor(surface: HTMLElement) {
     this.isTouch = window.matchMedia('(pointer: coarse)').matches && 'ontouchstart' in window;
@@ -124,6 +148,8 @@ export class Input {
       this.wheel += e.deltaMode === 1 ? e.deltaY * 20 : e.deltaY;
     }, { passive: false });
     surface.addEventListener('contextmenu', (e) => e.preventDefault());
+    window.addEventListener('gamepadconnected', (e) => { this.padId = e.gamepad.id; this.mapCache.delete(e.gamepad.id); });
+    window.addEventListener('gamepaddisconnected', () => { this.padId = null; });
   }
 
   attachSticks(left: HTMLElement, right: HTMLElement) {
@@ -131,51 +157,68 @@ export class Input {
     this.stickR = new VirtualStick(right, right.querySelector('.knob')!);
   }
 
+  /** First connected gamepad, if any. */
+  pad(): Gamepad | null {
+    const pads = navigator.getGamepads?.() ?? [];
+    for (const p of pads) if (p) return p;
+    return null;
+  }
+
+  mapFor(id: string): GamepadMap {
+    let m = this.mapCache.get(id);
+    if (!m) { m = loadMap(id) ?? defaultMap(id); this.mapCache.set(id, m); }
+    return m;
+  }
+  setMap(m: GamepadMap) { this.mapCache.set(m.id, m); }
+  invalidateMap(id: string) { this.mapCache.delete(id); }
+
   private key(...codes: string[]) {
     for (const c of codes) if (this.keys.has(c)) return 1;
     return 0;
   }
 
-  private gamepad(c: Controls) {
-    const pads = navigator.getGamepads?.() ?? [];
-    for (const p of pads) {
-      if (!p) continue;
-      const dz = (v: number) => (Math.abs(v) < 0.12 ? 0 : (v - Math.sign(v) * 0.12) / 0.88);
-      const lx = dz(p.axes[0] ?? 0), ly = dz(p.axes[1] ?? 0), rx = dz(p.axes[2] ?? 0), ry = dz(p.axes[3] ?? 0);
-      c.yaw += lx;
-      c.throttle += -ly;
-      c.roll += rx;
-      c.pitch += -ry;
-      if (p.buttons[7]?.pressed || p.buttons[5]?.pressed) c.boost = true; // RT / RB
-      c.throttle += (p.buttons[0]?.pressed ? 1 : 0) - (p.buttons[1]?.pressed ? 1 : 0); // A / B
-      c.gimbal += (p.buttons[12]?.pressed ? 1 : 0) - (p.buttons[13]?.pressed ? 1 : 0); // d-pad
-      break;
+  private gamepad(c: Controls, now: number) {
+    const p = this.pad();
+    if (!p) { this.padId = null; return; }
+    this.padId = p.id;
+    if (this.padPassthrough) { this.padPassthrough(p); return; }
+    const m = this.mapFor(p.id);
+    let active = false;
+    for (const name of AXIS_NAMES) {
+      const v = readAxis(p, m, name);
+      this.padLive[name] = v;
+      if (Math.abs(v) > 0.02) active = true;
+      c[name] += v;
     }
+    if (m.turboButton !== null && p.buttons[m.turboButton]?.pressed) { c.boost = true; active = true; }
+    // d-pad camera tilt on standard pads
+    c.gimbal += (p.buttons[12]?.pressed ? 1 : 0) - (p.buttons[13]?.pressed ? 1 : 0);
+    if (active) { this.padLastActive = now; c.source = 'gamepad'; }
   }
 
   /** Read & reset the accumulated controls for this frame. */
-  poll(): Controls {
+  poll(dt = 1 / 60, now = performance.now()): Controls {
+    const r = this.keyRates;
+    const kPitch = this.ramps.pitch.update(this.key('KeyW', 'ArrowUp') - this.key('KeyS', 'ArrowDown'), dt);
+    const kRoll = this.ramps.roll.update(this.key('KeyD', 'ArrowRight') - this.key('KeyA', 'ArrowLeft'), dt);
+    const kThr = this.ramps.throttle.update((this.key('Space', 'KeyX') - this.key('KeyC', 'KeyZ')) * r, dt);
+    const kYaw = this.ramps.yaw.update((this.key('KeyE') - this.key('KeyQ')) * r, dt);
     const c: Controls = {
-      pitch: this.key('KeyW', 'ArrowUp') - this.key('KeyS', 'ArrowDown'),
-      roll: this.key('KeyD', 'ArrowRight') - this.key('KeyA', 'ArrowLeft'),
-      throttle: this.key('Space', 'KeyX') - this.key('KeyC', 'KeyZ'),
-      yaw: this.key('KeyE') - this.key('KeyQ'),
+      pitch: kPitch,
+      roll: kRoll,
+      throttle: kThr,
+      yaw: kYaw,
       gimbal: this.key('KeyI') - this.key('KeyK'),
       boost: this.key('ShiftLeft', 'ShiftRight') === 1 || this.touchBoost,
       lookDX: this.lookDX,
       lookDY: this.lookDY,
       wheel: this.wheel,
+      source: Math.abs(kPitch) + Math.abs(kRoll) + Math.abs(kThr) + Math.abs(kYaw) > 0.02 ? 'keyboard' : 'none',
     };
     this.lookDX = this.lookDY = this.wheel = 0;
-    if (this.stickL) {
-      c.yaw += this.stickL.x;
-      c.throttle += this.stickL.y;
-    }
-    if (this.stickR) {
-      c.roll += this.stickR.x;
-      c.pitch += this.stickR.y;
-    }
-    this.gamepad(c);
+    if (this.stickL) { c.yaw += this.stickL.x; c.throttle += this.stickL.y; if (this.stickL.x || this.stickL.y) c.source = 'touch'; }
+    if (this.stickR) { c.roll += this.stickR.x; c.pitch += this.stickR.y; if (this.stickR.x || this.stickR.y) c.source = 'touch'; }
+    this.gamepad(c, now);
     const cl = (v: number) => Math.max(-1, Math.min(1, v));
     c.pitch = cl(c.pitch); c.roll = cl(c.roll); c.throttle = cl(c.throttle); c.yaw = cl(c.yaw); c.gimbal = cl(c.gimbal);
     return c;
@@ -186,5 +229,6 @@ export class Input {
     this.lookDX = this.lookDY = this.wheel = 0;
     this.dragging = false;
     this.dragId = null;
+    for (const r of Object.values(this.ramps)) r.v = 0;
   }
 }

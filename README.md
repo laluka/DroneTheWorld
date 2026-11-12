@@ -27,7 +27,13 @@ Pure frontend, no backend, no account: a static site that runs on GitHub Pages.
 | `M` `H` `N` `P` `F` | cycle map · toggle HUD · sound · screenshot · fullscreen |
 | `1`–`9` | jump to preset · `Esc` menu |
 
-Gamepad: left stick throttle/yaw, right stick pitch/roll, RT/RB turbo.
+**Radio controller first.** Any controller the browser sees as a gamepad works, including DJI remotes
+plugged in over USB (RC-N1/N2 in simulator/joystick mode, DJI FPV Remote Controller 2, RC Motion-style HID devices).
+Open the menu, then **Controller → Calibrate sticks**: leave sticks at rest, then push throttle up, yaw right,
+pitch forward, roll right, and press a turbo button. Axis order and direction are learned and saved per controller,
+with adjustable deadzone and expo. The OSD shows `RC` when the controller is driving.
+
+Keyboard is the fallback: keys ramp in and out like a stick, and the **Rates** slider scales yaw and throttle.
 The higher you fly, the faster you go (altitude speed scaling), so crossing a continent stays fun.
 
 ## Run it
@@ -40,7 +46,9 @@ npm run build    # static output in dist/
 
 ## Deploy to GitHub Pages
 
-1. Push to `main`. The workflow in `.github/workflows/deploy.yml` builds and publishes `dist/`.
+Hosting is optional and nothing is published by default. When you want it:
+
+1. Push to `main` of a GitHub repo. The workflow in `.github/workflows/deploy.yml` builds and publishes `dist/`.
 2. In the repo settings, set **Pages → Source** to **GitHub Actions** (first time only).
 3. The site is served from `https://<user>.github.io/<repo>/` (the build uses a relative base, so any path works).
 
