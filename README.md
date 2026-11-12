@@ -26,8 +26,7 @@ Pure frontend, no backend, no account: a static site that runs on GitHub Pages.
 - **Cine**: smooth assisted flight for sightseeing.
 
 The FPV camera is tilted up on the frame (20° by default, mouse drag up/down to change). The map renderer can't pitch
-above the horizon, so looking higher (hovering with uptilt) is rendered as a lens shift. Frame vibration grows with
-motor load, and dropping through your own prop wash makes the quad wobble.
+above the horizon, so looking higher (hovering with uptilt) is rendered as a lens shift. Crashes shake the image briefly.
 
 ## Controls
 

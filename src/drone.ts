@@ -75,8 +75,8 @@ const TUNE = {
   pitchGain: 16, pitchGainBoost: 24, rollGain: 26, yawRollGain: 0.11, attitudeTau: 0.16,
   // physics (angle / acro)
   /** max thrust as a multiple of hover thrust */
-  thrustMax: 2.6,
-  thrustMaxBoost: 3.6,
+  thrustMax: 3.6,
+  thrustMaxBoost: 4.6,
   /** quadratic air drag, 1/m: terminal ~45 m/s at full forward tilt */
   dragQ: 0.0065,
   dragLin: 0.08,
@@ -289,19 +289,12 @@ export class Drone {
     const maxAlt = s.ground + TUNE.maxAGL;
     if (s.alt > maxAlt) { s.alt = maxAlt; if (s.vU > 0) s.vU = 0; }
 
-    // --- impact shake, frame vibration under load, prop-wash wobble when sinking through our own wash ---
-    // Applied to the rendered image (CSS), never to the map camera: tiny camera jitter makes the map reload tiles.
+    // --- impact shake only (applied to the rendered image via CSS, never to the map camera) ---
     s.impact *= Math.exp(-dt * 3.5);
     const shake = s.impact * s.impact;
-    const physicsMode = s.mode !== 'cine';
-    const vib = physicsMode ? 0.25 + s.motor * 0.9 : 0;
-    const wash = physicsMode && s.vU < -2.5 && this.thrust < 1.3 ? Math.min(1, (-s.vU - 2.5) / 10) : 0;
-    const n = () => Math.random() * 2 - 1;
-    s.jitter = {
-      x: n() * vib + Math.sin(now * 0.021) * wash * 6 + Math.sin(now * 0.05) * shake * 14,
-      y: n() * vib + Math.sin(now * 0.017 + 1) * wash * 6 + Math.sin(now * 0.043) * shake * 14,
-      r: Math.sin(now * 0.023) * wash * 1.6 + Math.sin(now * 0.061) * shake * 4,
-    };
+    s.jitter = shake > 0.002
+      ? { x: Math.sin(now * 0.05) * shake * 14, y: Math.sin(now * 0.043) * shake * 14, r: Math.sin(now * 0.061) * shake * 4 }
+      : { x: 0, y: 0, r: 0 };
 
     // --- telemetry ---
     const spd = Math.hypot(s.vE, s.vN);
