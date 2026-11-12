@@ -12,6 +12,7 @@ setWorkerUrl(workerUrl);
 export class MapLibreEngine implements Engine {
   readonly id = 'maplibre' as const;
   readonly maxCamTilt = 86;
+  get vfov() { return this.quality === 'low' ? 62 : 75; }
   readonly map: MLMap;
   private styleLoading = false;
   private quality: 'high' | 'low';

@@ -1,4 +1,12 @@
 import type { DroneState } from './drone';
+import type { Poi } from './discover';
+
+export interface WorldMarks {
+  pois: Poi[];
+  isFound: (id: number) => boolean;
+  target: { poi: Poi; dist: number } | null;
+  vfov: number;
+}
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -19,6 +27,7 @@ export class Hud {
   private toastTimer = 0;
   private dpr = 1;
   visible = true;
+  world: WorldMarks | null = null;
 
   constructor() {
     this.resize();
@@ -102,6 +111,77 @@ export class Hud {
     this.drawOSD(s);
   }
 
+  private drawBeacons(ctx: CanvasRenderingContext2D, s: DroneState, w: WorldMarks, W: number, H: number) {
+    const items = w.pois
+      .map((p) => ({ p, d: Math.hypot((p.lng - s.lng) * 111_320 * Math.cos(s.lat * DEG), (p.lat - s.lat) * 111_132) }))
+      .filter((o) => o.d < 8000)
+      .sort((a, b) => b.d - a.d)
+      .slice(-30);
+    ctx.save();
+    ctx.textAlign = 'center';
+    const labels: { x: number; y: number; d: number; dist: number; title: string; col: string; near: number }[] = [];
+    for (const { p, d } of items) {
+      const found = w.isFound(p.id);
+      const g = p.ground ?? s.ground;
+      const pillar = 40 + Math.min(260, d * 0.05);
+      const base = project(s, p.lng, p.lat, g, W, H, w.vfov);
+      const top = project(s, p.lng, p.lat, g + pillar, W, H, w.vfov);
+      if (!base || !top) continue;
+      if (top.x < -100 || top.x > W + 100 || top.y < -100 || top.y > H + 100) continue;
+      const near = 1 - Math.min(1, d / 8000);
+      const isTarget = w.target?.poi.id === p.id;
+      const col = found ? '125,249,201' : '255,209,102';
+      const grad = ctx.createLinearGradient(base.x, base.y, top.x, top.y);
+      grad.addColorStop(0, `rgba(${col},0)`);
+      grad.addColorStop(1, `rgba(${col},${0.25 + near * 0.6})`);
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = 2 + near * 4;
+      ctx.beginPath(); ctx.moveTo(base.x, base.y); ctx.lineTo(top.x, top.y); ctx.stroke();
+      const sz = 4 + near * 7 + (isTarget ? 3 : 0);
+      ctx.fillStyle = `rgba(${col},${0.6 + near * 0.4})`;
+      ctx.beginPath(); ctx.moveTo(top.x, top.y - sz); ctx.lineTo(top.x + sz, top.y); ctx.lineTo(top.x, top.y + sz); ctx.lineTo(top.x - sz, top.y); ctx.closePath(); ctx.fill();
+      if (isTarget) { ctx.strokeStyle = `rgba(${col},0.9)`; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(top.x, top.y, sz + 7 + Math.sin(performance.now() / 200) * 2, 0, Math.PI * 2); ctx.stroke(); }
+      if (d < 2500 || isTarget) labels.push({ x: top.x, y: top.y - sz, d: isTarget ? -1 : d, dist: d, title: (found ? '✓ ' : '') + p.title, col, near });
+    }
+    // labels: nearest first, skip any that would overlap one already placed
+    const placed: { l: number; r: number; t: number; b: number }[] = [];
+    labels.sort((a, b) => a.d - b.d);
+    for (const L of labels) {
+      ctx.font = `600 ${11 + Math.round(L.near * 4)}px "Rajdhani", sans-serif`;
+      const w2 = ctx.measureText(L.title).width / 2 + 4;
+      const box = { l: L.x - w2, r: L.x + w2, t: L.y - 34, b: L.y - 4 };
+      if (placed.some((o) => box.l < o.r && box.r > o.l && box.t < o.b && box.b > o.t)) continue;
+      placed.push(box);
+      ctx.fillStyle = `rgba(255,255,255,${0.55 + L.near * 0.45})`;
+      ctx.fillText(L.title, L.x, L.y - 12);
+      ctx.font = '500 10px "JetBrains Mono", monospace';
+      ctx.fillStyle = `rgba(${L.col},0.9)`;
+      const dd = L.dist;
+      ctx.fillText(dd < 1000 ? `${Math.round(dd)} m` : `${(dd / 1000).toFixed(1)} km`, L.x, L.y - 26);
+    }
+    // guide to the nearest undiscovered place
+    const t = w.target;
+    if (t) {
+      const bearing = Math.atan2((t.poi.lng - s.lng) * Math.cos(s.lat * DEG), t.poi.lat - s.lat) / DEG;
+      const rel = ((bearing - s.heading + 540) % 360) - 180;
+      const y = W < 720 ? 150 : 96;
+      const cx = W / 2;
+      ctx.translate(cx, y);
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      ctx.beginPath(); ctx.arc(0, 0, 15, 0, Math.PI * 2); ctx.fill();
+      ctx.rotate(rel * DEG);
+      ctx.fillStyle = 'rgba(255,209,102,0.95)';
+      ctx.beginPath(); ctx.moveTo(0, -11); ctx.lineTo(7, 6); ctx.lineTo(0, 2); ctx.lineTo(-7, 6); ctx.closePath(); ctx.fill();
+      ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      ctx.font = '600 13px "Rajdhani", sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.95)';
+      ctx.textAlign = 'center';
+      const dist = t.dist < 1000 ? `${Math.round(t.dist)} m` : `${(t.dist / 1000).toFixed(1)} km`;
+      ctx.fillText(`${t.poi.title}  ·  ${dist}`, cx, y + 30);
+    }
+    ctx.restore();
+  }
+
   private drawOSD(s: DroneState) {
     const ctx = this.ctx;
     const W = innerWidth, H = innerHeight;
@@ -125,6 +205,8 @@ export class Hud {
       ctx.moveTo(x, y + sy * L); ctx.lineTo(x, y); ctx.lineTo(x + sx * L, y);
     }
     ctx.stroke();
+
+    if (this.world) this.drawBeacons(ctx, s, this.world, W, H);
 
     // ---- compass tape (top center) ----
     const cx = W / 2;
@@ -210,6 +292,29 @@ export class Hud {
       ctx.fillText(`×${s.scale.toFixed(s.scale < 10 ? 1 : 0)} ALT SPEED`, cx, cy + rr + 26);
     }
   }
+}
+
+const DEG = Math.PI / 180;
+
+/** Project a world point into screen space using the drone camera (same pose we hand to the renderer). */
+function project(s: DroneState, lng: number, lat: number, h: number, W: number, H: number, vfov: number) {
+  const dE = (lng - s.lng) * 111_320 * Math.cos(s.lat * DEG);
+  const dN = (lat - s.lat) * 111_132;
+  const dU = h - s.alt;
+  const hd = s.heading * DEG, el = (s.camPitch - 90) * DEG;
+  const f = [Math.sin(hd) * Math.cos(el), Math.cos(hd) * Math.cos(el), Math.sin(el)];
+  const r = [Math.cos(hd), -Math.sin(hd), 0];
+  const u = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]];
+  const x = dE * r[0] + dN * r[1] + dU * r[2];
+  const y = dE * u[0] + dN * u[1] + dU * u[2];
+  const z = dE * f[0] + dN * f[1] + dU * f[2];
+  if (z < 1) return null;
+  const F = H / 2 / Math.tan((vfov * DEG) / 2);
+  let sx = (x / z) * F, sy = (-y / z) * F;
+  const a = -s.roll * DEG;
+  const rx = sx * Math.cos(a) - sy * Math.sin(a);
+  const ry = sx * Math.sin(a) + sy * Math.cos(a);
+  return { x: W / 2 + rx, y: H / 2 + ry, z };
 }
 
 function ladderStep(v: number) { return v < 100 ? 10 : v < 1000 ? 50 : v < 10000 ? 500 : 5000; }

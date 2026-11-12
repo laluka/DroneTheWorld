@@ -249,3 +249,36 @@ kbd { font: 600 11px var(--font-mono); padding: 2px 6px; border-radius: 5px; bac
   .hud-bl { bottom: calc(250px + var(--safe-b)); }
   .hud-br { bottom: calc(250px + var(--safe-b)); }
 }
+
+/* ---------- discoveries ---------- */
+.hud-found { position: absolute; top: calc(118px + var(--safe-t)); right: calc(24px + var(--safe-r)); display: flex; align-items: center; gap: 6px; font-size: 15px; color: #fff; }
+.hud-found b { color: var(--accent-2); font-size: 14px; }
+#discovery {
+  position: fixed; z-index: 8; left: 50%; bottom: calc(52px + var(--safe-b)); width: min(560px, calc(100vw - 32px));
+  display: flex; gap: 14px; padding: 12px; border-radius: 16px;
+  background: rgba(255, 252, 244, 0.94); color: #1d1b16; box-shadow: 0 18px 50px rgba(0,0,0,0.35);
+  transform: translate(-50%, 30px) scale(0.96); opacity: 0; pointer-events: none;
+  transition: opacity 0.35s ease, transform 0.45s cubic-bezier(.2,1.4,.4,1);
+}
+#discovery.show { opacity: 1; transform: translate(-50%, 0) scale(1); pointer-events: auto; }
+#disc-img { width: 112px; height: 112px; object-fit: cover; border-radius: 10px; flex: none; background: #e9e3d6; }
+.disc-body { min-width: 0; flex: 1; }
+.disc-count { font-size: 10px; letter-spacing: 0.25em; color: #b7791f; font-weight: 700; }
+#discovery h3 { margin: 2px 0 0; font-size: 22px; line-height: 1.1; font-weight: 700; }
+.disc-desc { font-size: 13px; color: #6b6457; margin-top: 2px; }
+#disc-text { margin: 6px 0 4px; font-size: 13px; line-height: 1.4; color: #3b372f; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+#disc-text:empty { display: none; }
+#discovery a { font-size: 12px; font-weight: 600; color: #b7791f; text-decoration: none; }
+#disc-close { position: absolute; top: 6px; right: 8px; border: none; background: none; font-size: 20px; color: #8a8273; cursor: pointer; }
+.passport-head { font-size: 14px; color: var(--dim); margin-bottom: 10px; }
+.passport { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; }
+.passport:empty { display: none; }
+.stamp { display: flex; flex-direction: column; gap: 6px; padding: 6px; border-radius: 12px; border: 1px solid rgba(255,209,102,0.3); background: rgba(255,209,102,0.06); color: var(--fg); font: 600 12px var(--font-ui); text-align: left; cursor: pointer; transition: transform 0.15s, border-color 0.15s; }
+.stamp:hover { transform: translateY(-2px); border-color: var(--accent-2); }
+.stamp img, .stamp i { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 8px; background: rgba(255,255,255,0.06); display: block; }
+.stamp span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 720px) {
+  #disc-img { width: 76px; height: 76px; }
+  #discovery h3 { font-size: 18px; }
+  .hud-found { top: calc(104px + var(--safe-t)); }
+}

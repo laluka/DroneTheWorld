@@ -13,6 +13,7 @@ export class CesiumEngine implements Engine {
   private tileset: Cesium.Cesium3DTileset | null = null;
   private cache = new Map<string, { t: number; h: number | null }>();
   private verticalFov = 75;
+  get vfov() { return this.verticalFov; }
 
   private constructor(private container: HTMLElement, quality: 'high' | 'low') {
     this.viewer = new Cesium.Viewer(container, {

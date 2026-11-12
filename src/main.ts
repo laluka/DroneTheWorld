@@ -8,6 +8,7 @@ import { DroneAudio } from './audio';
 import { search, reverse, type GeoResult } from './geocode';
 import { MapLibreEngine } from './engine/maplibre';
 import type { Engine } from './engine/types';
+import { Discoveries, summary, type Poi } from './discover';
 import { Calibrator, STEP_TEXT, AXIS_NAMES, clearMap, saveMap, type GamepadMap } from './gamepad';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -16,11 +17,15 @@ export type ViewId = StyleId | 'photoreal';
 const VIEW_IDS: ViewId[] = [...STYLE_IDS, 'photoreal'];
 
 // ---------- settings (persisted) ----------
-interface Settings { style: ViewId; sound: boolean; volume: number; quality: 'high' | 'low'; googleKey: string; keyRates: number; }
-const DEFAULTS: Settings = { style: 'satellite', sound: false, volume: 0.4, quality: 'high', googleKey: '', keyRates: 1 };
+interface Settings { v: number; style: ViewId; sound: boolean; volume: number; quality: 'high' | 'low'; googleKey: string; keyRates: number; }
+const SETTINGS_VERSION = 2;
+const DEFAULTS: Settings = { v: SETTINGS_VERSION, style: 'satellite', sound: false, volume: 0.4, quality: 'high', googleKey: '', keyRates: 1 };
 const settings: Settings = (() => {
-  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('drone.settings') || '{}') }; }
-  catch { return { ...DEFAULTS }; }
+  let saved: Partial<Settings> = {};
+  try { saved = JSON.parse(localStorage.getItem('drone.settings') || '{}'); } catch { /* ignore */ }
+  // v2: everyone starts again on the sunny satellite view
+  if ((saved.v ?? 0) < SETTINGS_VERSION) { delete saved.style; saved.v = SETTINGS_VERSION; }
+  return { ...DEFAULTS, ...saved };
 })();
 const saveSettings = () => { try { localStorage.setItem('drone.settings', JSON.stringify(settings)); } catch { /* ignore */ } };
 /** Key baked at build time (GitHub Actions secret) or pasted in the menu. */
@@ -42,6 +47,8 @@ let lastSource: 'keyboard' | 'gamepad' | 'touch' | 'none' = 'keyboard';
 let lastSrcUpdate = 0;
 let lastImpacts = 0;
 const probe = (lng: number, lat: number) => engine.surface(lng, lat);
+const discoveries = new Discoveries();
+let lastDiscoverTick = 0;
 
 // ---------- engines ----------
 const maplibre = new MapLibreEngine($('map'), settings.quality, [drone.s.lng, drone.s.lat]);
@@ -138,6 +145,18 @@ function frame(now: number) {
     reverse(drone.s.lng, drone.s.lat).then((n) => { if (n) hud.setLocation(n); });
   }
   if (now - lastHashWrite > 1500) { lastHashWrite = now; writeHash(); }
+  if (now - lastDiscoverTick > 250) {
+    lastDiscoverTick = now;
+    discoveries.update(drone.s.lat, drone.s.lng, drone.s.alt - drone.s.floor);
+    for (const p of discoveries.pois) {
+      if (p.ground !== null) continue;
+      const sf = engine.surface(p.lng, p.lat);
+      if (sf) p.ground = sf.ground;
+    }
+    const target = discoveries.nearest(drone.s.lat, drone.s.lng);
+    hud.world = { pois: discoveries.pois, isFound: (id) => discoveries.isFound(id), target, vfov: engine.vfov };
+    $('hud-found').textContent = String(discoveries.passport.length);
+  }
 }
 requestAnimationFrame(frame);
 
@@ -172,6 +191,7 @@ async function flyTo(p: Place, instant = false) {
   lastPlace = p;
   if (!instant) { fade.classList.add('on'); await wait(420); }
   drone.teleport(p.lng, p.lat, p.heading, p.agl, p.pitch ?? 84);
+  discoveries.reset();
   currentPlaceName = p.sub ? `${p.name} · ${p.sub}` : p.name;
   hud.setLocation(currentPlaceName);
   lastReverse = { t: performance.now(), lng: p.lng, lat: p.lat };
@@ -325,6 +345,43 @@ function setView(v: ViewId) {
   });
 }
 syncSeg();
+
+// ---------- discoveries ----------
+const card = $('discovery');
+let cardTimer = 0;
+discoveries.onDiscover = async (p: Poi, total: number) => {
+  ($('disc-img') as HTMLImageElement).src = p.thumb ?? '';
+  $('disc-img').classList.toggle('hidden', !p.thumb);
+  $('disc-count').textContent = `DISCOVERY #${total}`;
+  $('disc-title').textContent = p.title;
+  $('disc-desc').textContent = p.description;
+  $('disc-text').textContent = '';
+  ($('disc-link') as HTMLAnchorElement).href = `https://en.wikipedia.org/wiki/${encodeURIComponent(p.title.replace(/ /g, '_'))}`;
+  card.classList.add('show');
+  if (settings.sound) audio.chime();
+  clearTimeout(cardTimer);
+  cardTimer = window.setTimeout(() => card.classList.remove('show'), 9000);
+  renderPassport();
+  const text = await summary(p.title);
+  if ($('disc-title').textContent === p.title) $('disc-text').textContent = text;
+};
+$('disc-close').addEventListener('click', () => card.classList.remove('show'));
+
+function renderPassport() {
+  const list = discoveries.passport;
+  $('passport-count').textContent = list.length ? `${list.length} place${list.length > 1 ? 's' : ''} discovered` : 'Fly near a golden beacon to discover a place';
+  $('passport').innerHTML = list.slice(0, 24).map((d) => `
+    <button class="stamp" data-lng="${d.lng}" data-lat="${d.lat}" data-title="${esc(d.title)}" title="Fly back to ${esc(d.title)}">
+      ${d.thumb ? `<img src="${esc(d.thumb)}" alt="" loading="lazy" />` : '<i></i>'}
+      <span>${esc(d.title)}</span>
+    </button>`).join('');
+}
+$('passport').addEventListener('click', (e) => {
+  const b = (e.target as HTMLElement).closest<HTMLElement>('.stamp');
+  if (!b) return;
+  flyTo({ name: b.dataset.title!, sub: '', lng: +b.dataset.lng! - 0.002, lat: +b.dataset.lat! - 0.0015, heading: 45, agl: 120, grad: '' });
+});
+renderPassport();
 
 // ---------- controller (gamepad / DJI RC) ----------
 input.keyRates = settings.keyRates;

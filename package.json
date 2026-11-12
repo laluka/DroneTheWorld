@@ -1,17 +1,16 @@
 {
-  "name": "drone-maps",
+  "name": "drone-the-world",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "World-wide drone flight simulator in the browser. Pure frontend, no API keys.",
+  "description": "FPV drone simulator over the whole planet, with landmark discoveries. Pure frontend.",
   "scripts": {
     "predev": "node scripts/copy-cesium.mjs",
     "dev": "vite",
     "prebuild": "node scripts/copy-cesium.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
-    "deploy": "npm run build && gh-pages -d dist"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@mapbox/vector-tile": "^3.0.0",
@@ -20,7 +19,6 @@
     "pbf": "^5.1.2"
   },
   "devDependencies": {
-    "gh-pages": "^6.3.0",
     "typescript": "^5.9.3",
     "vite": "^8.3.8"
   }

@@ -1,6 +1,6 @@
-# Drone World — FPV drone simulator for the whole planet
+# Drone The World — FPV drone simulator for the whole planet
 
-Fly an FPV quad over any city on Earth, straight from the browser.
+Fly an FPV quad over any city on Earth, straight from the browser, and discover the places around you.
 Pure frontend, no backend, no account: a static site that runs on GitHub Pages.
 
 - **Free mode (no keys)** — satellite imagery, streets or a night map, real terrain and 3D buildings
@@ -10,6 +10,9 @@ Pure frontend, no backend, no account: a static site that runs on GitHub Pages.
 - FPV feel: wide lens, body-fixed camera that pitches and banks with your inputs, turbo mode,
   Betaflight-style OSD (compass, speed and altitude ladders, artificial horizon, throttle, battery).
 - Keyboard + mouse, gamepad (mode 2) and touch sticks. Procedural motor/wind sound, off by default.
+- **Discoveries**: golden beacons mark notable places near you (from Wikipedia). Fly within ~140 m below 500 m
+  altitude to discover one: a card shows its photo and summary, and it goes into your **passport** (menu), where
+  any stamp flies you back there. A guide arrow under the compass points to the nearest undiscovered place.
 - Search any place (Photon geocoder), 16 curated presets, random mode, shareable URLs
   (`#lng,lat,agl,heading,camTilt,style`), screenshots with the OSD baked in.
 
@@ -74,6 +77,7 @@ Google offers a monthly free credit; 3D Tiles usage is billed per root-tile requ
 - Imagery: Esri World Imagery (Esri, Maxar, Earthstar Geographics, and the GIS User Community)
 - Terrain: Mapzen / AWS Open Data terrain tiles (Terrarium)
 - Geocoding: [Photon](https://photon.komoot.io) by komoot
+- Places and summaries: [Wikipedia](https://en.wikipedia.org) (CC BY-SA)
 - Rendering: [MapLibre GL JS](https://maplibre.org) · [CesiumJS](https://cesium.com/platform/cesiumjs/) for Google 3D Tiles
 
 All of the free-mode services are public, keyless endpoints with fair-use policies; please be gentle with them.
@@ -88,6 +92,9 @@ src/
   hud.ts           DOM telemetry + canvas OSD (compass, ladders, horizon)
   audio.ts         procedural motor + wind
   geocode.ts       Photon search / reverse
+  discover.ts      Wikipedia places nearby, discovery + passport
+  buildings.ts     building footprints/heights from vector tiles, for collision
+  gamepad.ts       controller mapping + calibration
   mapstyle.ts      MapLibre styles (satellite / streets / night) with terrain, sky, buildings
   engine/          MapLibre (free) and Cesium (Google 3D Tiles) renderers behind one interface
 ```

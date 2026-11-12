@@ -19,9 +19,9 @@ const terrainSource = {
 
 const SKIES: Record<StyleId, SkySpecification> = {
   satellite: {
-    'sky-color': '#5e9ed6',
-    'horizon-color': '#dbe6ee',
-    'fog-color': '#c9d8e6',
+    'sky-color': '#3f8fe0',
+    'horizon-color': '#f4e6c9',
+    'fog-color': '#e8e1cf',
     'fog-ground-blend': 0.88,
     'horizon-fog-blend': 0.8,
     'sky-horizon-blend': 0.55,
@@ -135,7 +135,7 @@ export async function buildStyle(id: StyleId, quality: 'high' | 'low'): Promise<
           id: 'imagery',
           type: 'raster',
           source: 'esri-imagery',
-          paint: { 'raster-saturation': -0.08, 'raster-contrast': 0.06, 'raster-brightness-min': 0.02, 'raster-fade-duration': 200 },
+          paint: { 'raster-saturation': 0.12, 'raster-contrast': 0.08, 'raster-brightness-min': 0.04, 'raster-fade-duration': 200 },
         },
         buildingsLayer(id),
         placeLabels(id),

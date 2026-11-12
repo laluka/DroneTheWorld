@@ -11,6 +11,8 @@ export interface Engine {
   readonly id: 'maplibre' | 'cesium';
   /** Highest camera tilt the renderer can display without artifacts (MapLibre pitch convention). */
   readonly maxCamTilt: number;
+  /** vertical field of view in degrees, for overlays drawn on top */
+  readonly vfov: number;
   setCamera(s: DroneState): void;
   /** Ground and obstacles at a point. null while unknown (data still loading). */
   surface(lng: number, lat: number): Surface | null;
