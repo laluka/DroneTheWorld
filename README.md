@@ -3,13 +3,16 @@
 Fly an FPV quad over any city on Earth, straight from the browser, and discover the places around you.
 Pure frontend, no backend, no account: a static site that runs on GitHub Pages.
 
-- **Free mode (no keys)** — satellite imagery, streets or a night map, real terrain and 3D buildings
-  extruded from OpenStreetMap heights. Works out of the box, worldwide.
+- **Free mode (no keys)** — a full 3D world: imagery on real terrain streamed to the horizon, OpenStreetMap buildings
+  with windows, floors, pitched roofs and rooftop clutter, sun shadows, trees in woods, parks, gardens and along
+  avenues (solid, you can crash into them), rivers and lakes with moving reflective water, clouds and haze, and a far
+  skyline. Night mode lights the windows and the streets under the stars. A Streets map too. Works worldwide.
 - **Photoreal 3D (optional)** — Google Photorealistic 3D Tiles rendered with CesiumJS:
   true textured cities, trees, bridges. Needs a Google Maps Platform API key (see below).
-- FPV feel: wide lens, body-fixed camera that pitches and banks with your inputs, turbo mode,
-  Betaflight-style OSD (compass, speed and altitude ladders, artificial horizon, throttle, battery).
-- Keyboard + mouse, gamepad (mode 2) and touch sticks. Procedural motor/wind sound, off by default.
+- FPV feel: body-fixed camera that follows every attitude (flips, rolls, loops, inverted), FPV lens look
+  (wide-angle distortion, vignette, speed blur, optional analog video), turbo mode, Betaflight-style OSD
+  (compass, speed and altitude ladders, artificial horizon, throttle, battery).
+- Keyboard + mouse, gamepad (mode 2) and touch sticks. Procedural sound (each motor's prop tone follows the motor mix, so flips and punches are audible), off by default.
 - **Discoveries**: golden beacons mark notable places near you (from Wikipedia). Fly within ~140 m below 500 m
   altitude to discover one: a card shows its photo and summary, and it goes into your **passport** (menu), where
   any stamp flies you back there. A guide arrow under the compass points to the nearest undiscovered place.
@@ -21,12 +24,50 @@ Pure frontend, no backend, no account: a static site that runs on GitHub Pages.
 - **Angle**: sticks tilt the quad, it levels itself when released. Real thrust, gravity and momentum;
   centred throttle holds altitude. Best on keyboard.
 - **Acro** (default): sticks command rotation rates (Betaflight "BF" rates: RC rate 1.0, super rate 0.7, ~670°/s); the quad keeps its attitude.
-  Bank and pull to carve turns, barrel rolls work. Centred throttle = hover thrust, so it suits spring-centred
-  RC sticks (DJI remotes). The map renderer can't look above the horizon, so forward/back flips are not possible.
+  Bank and pull to carve turns. Flips, rolls, loops, split-S and inverted flight all work.
 - **Cine**: smooth assisted flight for sightseeing.
 
-The FPV camera is tilted up on the frame (20° by default, mouse drag up/down to change). The map renderer can't pitch
-above the horizon, so looking higher (hovering with uptilt) is rendered as a lens shift. Crashes shake the image briefly.
+The FPV camera is tilted up on the frame (20° by default, mouse drag up/down to change). Crashes shake the image briefly.
+
+**Throttle** (menu → Controller): *Centred* means mid-stick hovers, for spring-centred sticks (DJI remotes in N/S mode,
+keyboard, touch). *Absolute* is like a real quad: bottom is motor idle, top is full power, and you set the stick position
+that hovers (35% by default). Absolute applies to a connected controller only.
+
+**Camera** (menu): *FPV lens* (default) adds wide-angle barrel distortion, vignette, a little chromatic aberration and
+speed blur. *Analog* adds video noise and scanlines. *Clean* turns it all off.
+
+Physics runs at a fixed 240 Hz whatever the frame rate, so the quad feels the same on every machine. The altitude
+speed boost only starts above 400 m in Angle/Acro (and scales all axes equally), so loops near the ground keep their shape.
+
+### Satellite 3D world (`src/engine/world/`)
+
+A three.js engine, keyless like the rest:
+- **Ground**: Esri World Imagery draped on AWS Terrarium terrain, as a distance-driven quadtree (down to 0.3 m pixels
+  near you, coarse tiles out to the horizon), with skirts between detail levels and procedural grain up close.
+  The DEM is smoothed at high zoom because SRTM-based data has buildings and canopy baked in as bumps.
+- **Buildings**: OpenFreeMap vector tiles (OSM `render_height` / `render_min_height` / `colour`), built in a worker.
+  Walls get floors and windows in the shader (shopfronts at street level, curtain walls on some towers, glass that
+  reflects the sky), roofs get colour and grain, and everything casts and receives sun shadows.
+- **Trees**: placed from landcover (woods dense, parks and gardens sparse, scrub as bushes) and along some main
+  streets, never inside buildings. Two levels of detail; nearby trees cast shadows and are collision obstacles.
+- **Roofs**: small, roughly rectangular buildings get gable or hipped roofs; big flat roofs get plant rooms and HVAC
+  boxes. Lattice towers (four legs, over 200 m, like the Eiffel Tower) are built as open steel lattices.
+- **Water**: OSM water polygons draped on the terrain, with moving ripples, Fresnel sky reflection and sun glints.
+- **Far skyline**: a lighter second ring of z13 tiles (tall buildings only) out to about 15 km, hidden where the
+  detailed ring is so the two never overlap.
+- **Sky and haze**: a sky dome with the sun and a drifting cloud layer at 1.8 km, and distance fog matched to the
+  horizon colour. The haze thins as you climb.
+- **Night**: moonlight, stars, imagery dimmed, random lit windows, and street lights along roads.
+
+Satellite and Night use this engine. Streets keeps the MapLibre renderer (with labels), Photoreal 3D keeps Cesium.
+
+### How looping works on a map renderer
+
+MapLibre can't draw the ground with its camera above the horizon. So the renderer draws the closest view it can
+(at most 79° pitch, unrolled as you look up), and a WebGL lens pass (`src/post.ts`) re-projects that frame into the
+true camera orientation. A pure camera rotation is an exact image warp, so nothing is approximated. The same pass
+paints the sky around it and applies the lens look. Cesium (Photoreal 3D) renders any orientation natively and goes
+through the same pass for the lens look.
 
 ## Controls
 
@@ -62,6 +103,7 @@ The higher you fly, the faster you go (altitude speed scaling), so crossing a co
 npm install
 npm run dev      # http://localhost:5173
 npm run build    # static output in dist/
+npm test         # flight model + camera math tests (vitest)
 ```
 
 ## Deploy to GitHub Pages
@@ -118,11 +160,14 @@ src/
   drone.ts         FPV flight model (velocity-based with body attitude)
   input.ts         keyboard / mouse / touch sticks / gamepad → control frame
   hud.ts           DOM telemetry + canvas OSD (compass, ladders, horizon)
-  audio.ts         procedural motor + wind
+  camera.ts        camera bases, renderer camera choice, lens projection (shared by renderer, lens pass, OSD)
+  post.ts          WebGL lens pass: re-projection to the true FPV camera, sky, distortion, blur, analog look
+  audio.ts         procedural sound: per-motor prop spectra driven by the motor mix, punch, prop wash, wind
   geocode.ts       Photon search / reverse
   discover.ts      Wikipedia places nearby, discovery + passport
   buildings.ts     building footprints/heights from vector tiles, for collision
   gamepad.ts       controller mapping + calibration
   mapstyle.ts      MapLibre styles (satellite / streets / night) with terrain, sky, buildings
-  engine/          MapLibre (free) and Cesium (Google 3D Tiles) renderers behind one interface
+  engine/          renderers behind one interface: world/ (three.js Satellite 3D), MapLibre (Streets, Night),
+                   Cesium (Google Photorealistic 3D Tiles)
 ```

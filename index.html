@@ -13,7 +13,9 @@
   </head>
   <body>
     <div id="map"></div>
+    <div id="world" style="display:none"></div>
     <div id="cesium" style="display:none"></div>
+    <canvas id="post"></canvas>
     <div id="surface"></div>
     <canvas id="osd"></canvas>
     <div id="impact"></div>
@@ -143,12 +145,28 @@
               </div>
               <label class="slider"><span>Deadzone</span><input id="pad-deadzone" type="range" min="0" max="30" value="8" /><b id="pad-deadzone-v">8%</b></label>
               <label class="slider"><span>Expo</span><input id="pad-expo" type="range" min="0" max="80" value="30" /><b id="pad-expo-v">30%</b></label>
+              <div class="sub-title">Throttle</div>
+              <div class="seg" id="thr-seg">
+                <button data-thr="centered" class="active">Centred</button>
+                <button data-thr="absolute">Absolute</button>
+              </div>
+              <label id="hover-wrap" class="slider hidden"><span>Hover at</span><input id="hover" type="range" min="15" max="60" value="35" /><b id="hover-v">35%</b></label>
+              <p class="opt-note">Centred: mid-stick hovers, for spring-centred sticks. Absolute: bottom is motor idle, like a real quad; set where it hovers.</p>
             </div>
           </div>
           <div class="opt">
             <div class="section-title">Keyboard</div>
             <label class="slider"><span>Rates</span><input id="key-rates" type="range" min="40" max="160" value="100" /><b id="key-rates-v">100%</b></label>
             <p class="opt-note">Keys ramp like a stick. Rates scale yaw and throttle response.</p>
+          </div>
+          <div class="opt">
+            <div class="section-title">Camera</div>
+            <div class="seg" id="lens-seg">
+              <button data-lens="clean">Clean</button>
+              <button data-lens="fpv" class="active">FPV lens</button>
+              <button data-lens="analog">Analog</button>
+            </div>
+            <p class="opt-note">FPV lens adds wide-angle distortion, vignette and speed blur. Analog adds video noise.</p>
           </div>
           <div class="opt">
             <div class="section-title">Quality</div>

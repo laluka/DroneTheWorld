@@ -10,16 +10,22 @@
     "prebuild": "node scripts/copy-cesium.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@mapbox/vector-tile": "^3.0.0",
     "cesium": "^1.147.0",
+    "earcut": "^3.2.4",
     "maplibre-gl": "^6.17.0",
-    "pbf": "^5.1.2"
+    "pbf": "^5.1.2",
+    "three": "^0.187.0"
   },
   "devDependencies": {
+    "@types/earcut": "^3.0.0",
+    "@types/three": "^0.187.0",
     "typescript": "^5.9.3",
-    "vite": "^8.3.8"
+    "vite": "^8.3.8",
+    "vitest": "^3.2.7"
   }
 }

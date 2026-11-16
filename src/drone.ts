@@ -1,5 +1,6 @@
 import type { Controls } from './input';
 import type { Surface } from './engine/types';
+import { basisFrom, eulerOfBasis, type CamBasis } from './camera';
 
 export type Probe = (lng: number, lat: number) => Surface | null;
 
@@ -30,11 +31,11 @@ export interface DroneState {
   camTilt: number;
   /** angle/acro: FPV camera uptilt above the frame's forward axis, degrees */
   uptilt: number;
-  /** effective camera pitch handed to the renderer (MapLibre convention) */
+  /** camera look pitch (MapLibre convention: 0 = down, 90 = horizon, 180 = up) */
   camPitch: number;
-  /** how far the camera looks above what the renderer can pitch to, degrees; rendered as a lens shift */
-  lookUp: number;
-  /** image-space shake (vibration, prop wash, impacts), applied to the rendered frame, not the camera */
+  /** full FPV camera orientation (any attitude: loops, rolls, inverted) */
+  cam: CamBasis;
+  /** image-space shake (impacts), applied to the rendered frame, not the camera */
   jitter: { x: number; y: number; r: number };
   /** camera roll in degrees */
   roll: number;
@@ -45,12 +46,18 @@ export interface DroneState {
   vU: number;
   /** horizontal ground speed m/s (after altitude scaling) */
   groundSpeed: number;
-  /** speed multiplier currently applied (grows with altitude) */
+  /** horizontal speed multiplier currently applied (grows with altitude) */
   scale: number;
+  /** vertical speed multiplier currently applied */
+  vScale: number;
   boost: boolean;
   mode: FlightMode;
   /** 0..1 motor load, for audio and OSD */
   motor: number;
+  /** per-motor command 0..1 (front-right, rear-right, rear-left, front-left), for audio */
+  motors: [number, number, number, number];
+  /** body angular rates, deg/s (pitch nose-down, roll right, yaw right), for audio */
+  rates: [number, number, number];
   distance: number;
   flightTime: number;
   battery: number;
@@ -77,20 +84,24 @@ const TUNE = {
   /** max thrust as a multiple of hover thrust */
   thrustMax: 3.6,
   thrustMaxBoost: 4.6,
+  /** absolute throttle: motor idle as a fraction of max thrust (air mode keeps authority at idle) */
+  idle: 0.04,
   /** quadratic air drag, 1/m: terminal ~45 m/s at full forward tilt */
   dragQ: 0.0065,
   dragLin: 0.08,
   // Betaflight "BF" rates: rc rate, super rate, expo → ~670°/s roll/pitch, ~500°/s yaw at full stick
   rcRate: 1.0, superRate: 0.7, rcExpo: 0.1,
   yawRcRate: 1.0, yawSuperRate: 0.6, yawExpo: 0.1,
-  maxLookUp: 50,
   angleMax: 55, angleMaxBoost: 68, angleYaw: 200, angleResponse: 9,
   uptiltDefault: 20,
   uptiltMin: 0,
-  uptiltMax: 45,
-  pitchMin: -75,
-  pitchMax: 89,
+  uptiltMax: 50,
+  /** physics rate, Hz: fixed steps make the feel identical at any frame rate */
+  hz: 240,
 };
+
+/** quad-X motor mix [pitch nose-down, roll right, yaw right]: front-right, rear-right, rear-left, front-left */
+const MIX: [number, number, number][] = [[-1, -1, 1], [1, -1, -1], [1, 1, 1], [-1, 1, -1]];
 
 // ---------- tiny quaternion helpers (w, x, y, z); body frame: x right, y forward, z up; world: E, N, U ----------
 type Q = [number, number, number, number];
@@ -132,22 +143,26 @@ const bfRate = (x: number, rcRate: number, superRate: number, expo: number) => {
 export class Drone {
   s: DroneState = {
     lng: 2.3015, lat: 48.8515, alt: 250, ground: 0, floor: 0, impact: 0, impacts: 0, heading: 325,
-    camTilt: 84, uptilt: TUNE.uptiltDefault, camPitch: 84, lookUp: 0, jitter: { x: 0, y: 0, r: 0 }, roll: 0, bodyPitch: 0,
-    vE: 0, vN: 0, vU: 0, groundSpeed: 0, scale: 1, boost: false, mode: 'angle', motor: 0,
+    camTilt: 84, uptilt: TUNE.uptiltDefault, camPitch: 84, cam: basisFrom(325, 84, 0), jitter: { x: 0, y: 0, r: 0 }, roll: 0, bodyPitch: 0,
+    vE: 0, vN: 0, vU: 0, groundSpeed: 0, scale: 1, vScale: 1, boost: false, mode: 'angle', motor: 0,
+    motors: [0, 0, 0, 0], rates: [0, 0, 0],
     distance: 0, flightTime: 0, battery: 100, stick: { pitch: 0, roll: 0, yaw: 0, throttle: 0 },
   };
+  /**
+   * Throttle mapping for real radios. false: centre stick = hover (spring-centred sticks, keyboard, touch).
+   * true: bottom = motor idle, `hover` (0..1 of stick travel) = hover, top = full power, like a real quad.
+   */
+  absThrottle = false;
+  hover = 0.35;
   private q: Q = qFromEuler(325, 0, 0);
   private yawVel = 0;
   private settleUntil = 0;
   private targetAGL = 200;
-  private camTiltMax = 86;
   private lastImpactT = 0;
   private thrust = 1;
-
-  /** Renderer-dependent: MapLibre can't look above the horizon, Cesium can a bit. */
-  setCamLimits(maxTilt: number) {
-    this.camTiltMax = maxTilt;
-  }
+  private acc = 0;
+  private w: V = [0, 0, 0];
+  private alpha: V = [0, 0, 0];
 
   setMode(m: FlightMode) {
     const s = this.s;
@@ -169,15 +184,17 @@ export class Drone {
   teleport(lng: number, lat: number, heading: number, agl: number, camTilt = 84) {
     const s = this.s;
     s.lng = lng; s.lat = lat; s.heading = heading; s.camTilt = camTilt; s.camPitch = camTilt;
-    s.vE = s.vN = s.vU = 0; s.roll = 0; s.bodyPitch = 0; s.lookUp = 0; this.yawVel = 0;
+    s.vE = s.vN = s.vU = 0; s.roll = 0; s.bodyPitch = 0; this.yawVel = 0;
     this.q = qFromEuler(heading, 0, 0);
     this.thrust = 1;
+    this.acc = 0;
     s.ground = 0;
     s.floor = 0;
     s.impact = 0;
     s.alt = agl;
     this.targetAGL = agl;
     this.settleUntil = performance.now() + 3500;
+    this.updateCamera();
   }
 
   levelCamera() {
@@ -215,7 +232,7 @@ export class Drone {
 
   step(dt: number, c: Controls, probe: Probe | null, now: number) {
     const s = this.s;
-    dt = Math.min(dt, 0.05);
+    dt = Math.min(dt, 0.25);
     const here = probe ? probe(s.lng, s.lat) : null;
     if (here) { s.ground = here.ground; s.floor = this.floorOf(here, s.alt) ?? s.ground; }
 
@@ -231,18 +248,32 @@ export class Drone {
     s.boost = c.boost;
     s.stick = { pitch: c.pitch, roll: c.roll, yaw: c.yaw, throttle: c.throttle };
 
-    // Altitude-based speed scaling: higher = faster, so crossing a continent stays fun.
-    const scale = Math.min(80, Math.max(1, agl / 120));
-    s.scale = scale;
+    // Altitude-based speed scaling, so crossing a continent stays fun. In the physics modes it only starts high up
+    // and is the same on every axis, so manoeuvres near the ground keep their true shape and momentum.
+    if (s.mode === 'cine') {
+      s.scale = Math.min(80, Math.max(1, agl / 120));
+      s.vScale = Math.min(60, Math.max(1, agl / 150));
+    } else {
+      s.scale = s.vScale = Math.min(60, Math.max(1, agl / 400));
+    }
 
-    const vScale = s.mode === 'cine' ? Math.min(60, Math.max(1, agl / 150)) : Math.min(20, Math.max(1, agl / 400));
-    if (s.mode === 'cine') this.cine(dt, c); else this.physics(dt, c, settling);
+    // Per-frame inputs (mouse look, wheel) apply once; the dynamics run at a fixed rate.
+    this.frameInputs(c);
+    const h = 1 / TUNE.hz;
+    this.acc += dt;
+    let dE = 0, dN = 0, dU = 0;
+    while (this.acc >= h) {
+      this.acc -= h;
+      if (s.mode === 'cine') this.cine(h, c); else this.physics(h, c, settling);
+      dE += s.vE * h; dN += s.vN * h; dU += s.vU * h;
+    }
+    this.updateCamera();
 
     // --- integrate position ---
     const mPerDegLat = 111_132;
     const mPerDegLng = 111_320 * Math.max(0.05, Math.cos(s.lat * deg));
-    const dE = s.vE * scale * dt, dN = s.vN * scale * dt;
-    s.alt += s.vU * vScale * dt;
+    dE *= s.scale; dN *= s.scale;
+    s.alt += dU * s.vScale;
 
     // --- building collision: probe a little ahead of the camera, slide along walls, bounce on impact ---
     const insideNow = this.blocked(here, s.alt);
@@ -254,7 +285,7 @@ export class Drone {
         return probe(s.lng + (e + (e / len) * r) / mPerDegLng, s.lat + (n + (n / len) * r) / mPerDegLat);
       };
       if (this.blocked(ahead(dE, dN), s.alt)) {
-        const hitSpeed = Math.hypot(s.vE, s.vN) * scale;
+        const hitSpeed = Math.hypot(s.vE, s.vN) * s.scale;
         if (Math.abs(dE) > 1e-4 && !this.blocked(ahead(dE, 0), s.alt)) { moveN = 0; s.vN *= -0.2; }
         else if (Math.abs(dN) > 1e-4 && !this.blocked(ahead(0, dN), s.alt)) { moveE = 0; s.vE *= -0.2; }
         else { moveE = moveN = 0; s.vE *= -0.35; s.vN *= -0.35; }
@@ -284,7 +315,15 @@ export class Drone {
       if (s.mode !== 'cine' && s.vU < -6) this.hit(-s.vU / 18, now);
       s.alt += (minAlt - s.alt) * Math.min(1, dt * 12);
       if (s.vU < 0) s.vU = 0;
-      if (s.mode !== 'cine') { const f = Math.exp(-dt * 3); s.vE *= f; s.vN *= f; }
+      if (s.mode !== 'cine') {
+        const f = Math.exp(-dt * 3); s.vE *= f; s.vN *= f;
+        // resting on the ground, the quad settles flat on its landing gear instead of balancing on a prop
+        const lvl = qFromEuler(eulerOf(this.q).heading, 0, 0);
+        const sgn = lvl[0] * this.q[0] + lvl[1] * this.q[1] + lvl[2] * this.q[2] + lvl[3] * this.q[3] < 0 ? -1 : 1;
+        const k = Math.min(1, dt * 4);
+        this.q = qNorm(this.q.map((v, i) => v + (lvl[i] * sgn - v) * k) as Q);
+        this.updateCamera();
+      }
     }
     const maxAlt = s.ground + TUNE.maxAGL;
     if (s.alt > maxAlt) { s.alt = maxAlt; if (s.vU > 0) s.vU = 0; }
@@ -298,20 +337,43 @@ export class Drone {
 
     // --- telemetry ---
     const spd = Math.hypot(s.vE, s.vN);
-    s.groundSpeed = spd * scale;
+    s.groundSpeed = spd * s.scale;
     s.distance += s.groundSpeed * dt;
     s.flightTime += dt;
     s.battery = Math.max(3, s.battery - dt * (0.06 + s.motor * 0.09) * (s.boost ? 1.5 : 1));
   }
 
-  /** Thrust-vector flight: rates (acro) or self-levelling angles (angle), gravity, drag. */
+  /** Mouse yaw / camera tilt / wheel: accumulated deltas, applied once per frame. */
+  private frameInputs(c: Controls) {
+    const s = this.s;
+    if (s.mode === 'cine') {
+      s.heading = (((s.heading + c.lookDX * TUNE.lookSens) % 360) + 360) % 360;
+      s.camTilt = Math.max(TUNE.camTiltMin, Math.min(TUNE.camTiltCineMax, s.camTilt - c.lookDY * TUNE.camTiltSens));
+      s.vU -= c.wheel * 0.03 * (c.boost ? 2 : 1);
+    } else {
+      // yaw around the world vertical, Y adjusts camera uptilt
+      if (c.lookDX) this.q = qNorm(qMul(qAxis(0, 0, 1, -c.lookDX * TUNE.lookSens * deg), this.q));
+      s.uptilt = Math.max(TUNE.uptiltMin, Math.min(TUNE.uptiltMax, s.uptilt + c.lookDY * 0.08));
+    }
+  }
+
+  /** Thrust from the throttle stick, as a multiple of hover thrust. */
+  private throttleThrust(throttle: number, tMax: number) {
+    if (!this.absThrottle) return throttle >= 0 ? 1 + throttle * (tMax - 1) : 1 + throttle; // [-1,1] → [0, tMax], centre = hover
+    const x = Math.max(0, Math.min(1, (throttle + 1) / 2));
+    const idle = TUNE.idle * tMax;
+    const hov = Math.max(0.1, Math.min(0.8, this.hover));
+    // power curve through (0, idle), (hover, 1), (1, tMax)
+    const gamma = Math.log((1 - idle) / (tMax - idle)) / Math.log(hov);
+    return idle + (tMax - idle) * Math.pow(x, gamma);
+  }
+
+  /** Thrust-vector flight: rates (acro) or self-levelling angles (angle), gravity, drag. One fixed step. */
   private physics(dt: number, c: Controls, settling: boolean) {
     const s = this.s;
     const boost = c.boost;
-
-    // mouse: yaw around the world vertical, Y adjusts camera uptilt
-    if (c.lookDX) this.q = qNorm(qMul(qAxis(0, 0, 1, -c.lookDX * TUNE.lookSens * deg), this.q));
-    s.uptilt = Math.max(TUNE.uptiltMin, Math.min(TUNE.uptiltMax, s.uptilt + c.lookDY * 0.08 + c.gimbal * 30 * dt));
+    s.uptilt = Math.max(TUNE.uptiltMin, Math.min(TUNE.uptiltMax, s.uptilt + c.gimbal * 30 * dt));
+    const prevQ = this.q;
 
     if (s.mode === 'acro') {
       // binary keys at full rate are uncontrollable; real sticks get full Betaflight-like rates
@@ -332,17 +394,12 @@ export class Drone {
       const hd = e.heading + shape(c.yaw, TUNE.angleYaw * (boost ? 1.2 : 1), 0.3) * dt;
       this.q = qFromEuler(hd, pd, rl);
     }
+    this.trackRates(prevQ, dt);
 
-    // Renderer limit: the map can't look above the horizon, so no forward/back flips.
-    let e = eulerOf(this.q);
-    if (e.pitchDown < TUNE.pitchMin || e.pitchDown > TUNE.pitchMax) {
-      this.q = qFromEuler(e.heading, Math.max(TUNE.pitchMin, Math.min(TUNE.pitchMax, e.pitchDown)), e.roll);
-      e = eulerOf(this.q);
-    }
-
-    // thrust along body up; throttle centre = hover (springy RC sticks and keys)
+    const e = eulerOf(this.q);
+    // thrust along body up
     const tMax = boost ? TUNE.thrustMaxBoost : TUNE.thrustMax;
-    let t = c.throttle >= 0 ? 1 + c.throttle * (tMax - 1) : 1 + c.throttle; // [-1,1] → [0, tMax]
+    let t = this.throttleThrust(c.throttle, tMax);
     if (s.mode === 'angle') t = Math.min(tMax, t / Math.max(0.4, e.up[2])); // altitude assist when tilted
     t -= c.wheel * 0.004;
     this.thrust += (Math.max(0, t) - this.thrust) * Math.min(1, dt * 14); // motor spool
@@ -354,29 +411,67 @@ export class Drone {
     s.vU += (e.up[2] * a - G - drag * s.vU) * dt;
     if (settling) s.vU = 0;
 
-    // camera bolted to the frame, tilted up by `uptilt`
-    const cam = eulerOf(qMul(this.q, qAxis(1, 0, 0, s.uptilt * deg)));
-    s.heading = cam.heading;
-    s.roll = cam.roll;
     s.bodyPitch = e.pitchDown;
-    const want = 90 - cam.pitchDown;
-    s.camPitch = Math.max(5, Math.min(this.camTiltMax, want));
-    s.lookUp = Math.max(0, Math.min(TUNE.maxLookUp, want - this.camTiltMax));
-
     const load = this.thrust / tMax;
     s.motor += (Math.min(1, 0.15 + load * 1.1) - s.motor) * Math.min(1, dt * 10);
+    this.mixMotors(load);
   }
 
-  /** Smooth velocity-based flight (the original sightseeing model). */
+  /** Body angular rate and its (smoothed) acceleration, from the attitude change of one step. */
+  private trackRates(prev: Q, dt: number) {
+    const d = qMul([prev[0], -prev[1], -prev[2], -prev[3]], this.q);
+    const sgn = d[0] < 0 ? -1 : 1;
+    const sh = Math.hypot(d[1], d[2], d[3]);
+    const ang = 2 * Math.atan2(sh, Math.abs(d[0]));
+    const k = sh > 1e-9 ? (ang / dt / sh) * sgn : 0;
+    const w: V = [d[1] * k, d[2] * k, d[3] * k];
+    const f = Math.min(1, dt / 0.03);
+    for (let i = 0; i < 3; i++) {
+      this.alpha[i] += ((w[i] - this.w[i]) / dt - this.alpha[i]) * f;
+      this.w[i] = w[i];
+    }
+    this.s.rates = [-w[0] / deg, w[1] / deg, -w[2] / deg];
+  }
+
+  /** What each motor would be doing: collective thrust plus the torque needed for the current rotation changes. */
+  private mixMotors(load: number) {
+    const s = this.s;
+    const ap = -this.alpha[0], ar = this.alpha[1], ay = -this.alpha[2]; // rad/s² nose-down, right, yaw right
+    const wy = -this.w[2];
+    for (let i = 0; i < 4; i++) {
+      const [mp, mr, my] = MIX[i];
+      const torque = (mp * ap + mr * ar) * 0.0035 + my * (ay * 0.0012 + wy * 0.025);
+      s.motors[i] = Math.max(0.02, Math.min(1, load + torque));
+    }
+  }
+
+  /** Camera = frame orientation tilted up by `uptilt` (physics modes), or the cine gimbal. */
+  private updateCamera() {
+    const s = this.s;
+    if (s.mode === 'cine') {
+      const pitch = s.camTilt - s.bodyPitch;
+      s.cam = basisFrom(s.heading, pitch, s.roll);
+      s.camPitch = pitch;
+      return;
+    }
+    const cq = qMul(this.q, qAxis(1, 0, 0, s.uptilt * deg));
+    // body frame x right, y forward, z up → camera r, f, u
+    s.cam = { r: qRot(cq, [1, 0, 0]), u: qRot(cq, [0, 0, 1]), f: qRot(cq, [0, 1, 0]) };
+    const e = eulerOfBasis(s.cam);
+    s.heading = e.heading;
+    s.roll = e.roll;
+    s.camPitch = e.pitch;
+  }
+
+  /** Smooth velocity-based flight (the original sightseeing model). One fixed step. */
   private cine(dt: number, c: Controls) {
     const s = this.s;
     const boost = c.boost;
     const yawTarget = c.yaw * (boost ? TUNE.yawRateBoost : TUNE.yawRate);
     this.yawVel += (yawTarget - this.yawVel) * Math.min(1, dt / TUNE.yawTau);
-    s.heading += this.yawVel * dt + c.lookDX * TUNE.lookSens;
-    s.heading = ((s.heading % 360) + 360) % 360;
+    s.heading = (((s.heading + this.yawVel * dt) % 360) + 360) % 360;
 
-    s.camTilt += c.gimbal * TUNE.camTiltKeyRate * dt - c.lookDY * TUNE.camTiltSens;
+    s.camTilt += c.gimbal * TUNE.camTiltKeyRate * dt;
     s.camTilt = Math.max(TUNE.camTiltMin, Math.min(TUNE.camTiltCineMax, s.camTilt));
 
     const acc = boost ? TUNE.accBoost : TUNE.acc;
@@ -392,7 +487,6 @@ export class Drone {
 
     const vAcc = boost ? TUNE.vAccBoost : TUNE.vAcc;
     s.vU += c.throttle * vAcc * dt;
-    s.vU -= c.wheel * 0.03 * (boost ? 2 : 1);
     s.vU *= Math.exp(-TUNE.vDrag * dt);
     const maxVS = boost ? TUNE.maxVSBoost : TUNE.maxVS;
     s.vU = Math.max(-maxVS * 1.3, Math.min(maxVS, s.vU));
@@ -401,12 +495,15 @@ export class Drone {
     s.bodyPitch += (c.pitch * (boost ? TUNE.pitchGainBoost : TUNE.pitchGain) - s.bodyPitch) * k;
     const bankTarget = c.roll * TUNE.rollGain + this.yawVel * TUNE.yawRollGain * Math.min(1, spd / 8 + 0.35);
     s.roll += (bankTarget - s.roll) * k;
-    const want = s.camTilt - s.bodyPitch;
-    s.camPitch = Math.max(5, Math.min(this.camTiltMax, want));
-    s.lookUp = Math.max(0, want - this.camTiltMax);
     this.q = qFromEuler(s.heading, 0, 0);
 
     const effort = Math.min(1, 0.28 + (Math.abs(c.pitch) + Math.abs(c.roll)) * 0.3 + Math.max(0, c.throttle) * 0.5 + Math.abs(c.yaw) * 0.1);
     s.motor += (effort * (boost ? 1.3 : 1) - s.motor) * Math.min(1, dt * 4);
+    const st = s.motor * 0.8;
+    for (let i = 0; i < 4; i++) {
+      const [mp, mr, my] = MIX[i];
+      s.motors[i] = Math.max(0.05, Math.min(1, st + (mp * c.pitch + mr * c.roll) * 0.06 + my * c.yaw * 0.04));
+    }
+    s.rates = [0, 0, this.yawVel];
   }
 }

@@ -1,14 +1,15 @@
 import * as Cesium from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import type { Engine, Surface } from './types';
-import type { DroneState } from '../drone';
+import type { RenderCam } from '../camera';
 
 const rad = Cesium.Math.toRadians;
 
 /** Google Photorealistic 3D Tiles through CesiumJS. Needs a Google Maps Platform key with the Map Tiles API enabled. */
 export class CesiumEngine implements Engine {
   readonly id = 'cesium' as const;
-  readonly maxCamTilt = 112;
+  /** Cesium renders any orientation natively. */
+  readonly maxCamTilt = 180;
   private viewer: Cesium.Viewer;
   private tileset: Cesium.Cesium3DTileset | null = null;
   private cache = new Map<string, { t: number; h: number | null }>();
@@ -62,12 +63,14 @@ export class CesiumEngine implements Engine {
     return engine;
   }
 
-  setCamera(s: DroneState) {
+  setCamera(c: RenderCam) {
     this.viewer.camera.setView({
-      destination: Cesium.Cartesian3.fromDegrees(s.lng, s.lat, s.alt),
-      orientation: { heading: rad(s.heading), pitch: rad(s.camPitch - 90), roll: rad(s.roll) },
+      destination: Cesium.Cartesian3.fromDegrees(c.lng, c.lat, c.alt),
+      orientation: { heading: rad(c.heading), pitch: rad(c.pitch - 90), roll: rad(c.roll) },
     });
   }
+
+  sky() { return null; }
 
   /** Google tiles have no separate ground: the sampled top surface (roofs included) is the floor, walls show as height jumps. */
   surface(lng: number, lat: number): Surface | null {

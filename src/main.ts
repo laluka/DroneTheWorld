@@ -8,8 +8,11 @@ import { DroneAudio } from './audio';
 import { search, reverse, type GeoResult } from './geocode';
 import { MapLibreEngine } from './engine/maplibre';
 import type { Engine } from './engine/types';
+import type { WorldEngine } from './engine/world/engine';
 import { Discoveries, summary, type Poi } from './discover';
 import { Calibrator, STEP_TEXT, STEPS, AXIS_NAMES, clearMap, saveMap, loadMap, type GamepadMap } from './gamepad';
+import { basisFrom, chooseRenderCam, dot, type Lens } from './camera';
+import { LensPass, LENS_FX, type LensMode } from './post';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -17,9 +20,17 @@ export type ViewId = StyleId | 'photoreal';
 const VIEW_IDS: ViewId[] = [...STYLE_IDS, 'photoreal'];
 
 // ---------- settings (persisted) ----------
-interface Settings { v: number; flightMode: FlightMode; style: ViewId; sound: boolean; volume: number; quality: 'high' | 'low'; googleKey: string; keyRates: number; }
+interface Settings {
+  v: number; flightMode: FlightMode; style: ViewId; sound: boolean; volume: number; quality: 'high' | 'low'; googleKey: string; keyRates: number;
+  /** FPV feed look */
+  lens: LensMode;
+  /** radio throttle: centre = hover, or absolute (idle at the bottom, like a real quad) */
+  throttle: 'centered' | 'absolute';
+  /** absolute throttle: stick position that hovers, 0..1 */
+  hover: number;
+}
 const SETTINGS_VERSION = 3;
-const DEFAULTS: Settings = { v: SETTINGS_VERSION, flightMode: 'acro', style: 'satellite', sound: false, volume: 0.6, quality: 'high', googleKey: '', keyRates: 1 };
+const DEFAULTS: Settings = { v: SETTINGS_VERSION, flightMode: 'acro', style: 'satellite', sound: false, volume: 0.6, quality: 'high', googleKey: '', keyRates: 1, lens: 'fpv', throttle: 'centered', hover: 0.35 };
 const settings: Settings = (() => {
   let saved: Partial<Settings> = {};
   try { saved = JSON.parse(localStorage.getItem('drone.settings') || '{}'); } catch { /* ignore */ }
@@ -50,14 +61,26 @@ let lastSource: 'keyboard' | 'gamepad' | 'touch' | 'none' = 'keyboard';
 let lastSrcUpdate = 0;
 let lastImpacts = 0;
 const probe = (lng: number, lat: number) => engine.surface(lng, lat);
-const shakeEl = () => $(engine.id === 'cesium' ? 'cesium' : 'map');
+const lensPass = new LensPass($('post') as HTMLCanvasElement);
+const shakeEl = () => (lensPass.ok ? lensPass.canvas : $(engine.id === 'cesium' ? 'cesium' : 'map'));
 const discoveries = new Discoveries();
 let lastDiscoverTick = 0;
 
 // ---------- engines ----------
 const maplibre = new MapLibreEngine($('map'), settings.quality, [drone.s.lng, drone.s.lat]);
 let cesium: Engine | null = null;
+let world: WorldEngine | null = null;
 let engine: Engine = maplibre;
+
+/** Keyless 3D world engine (Satellite view): created on first use. */
+async function loadWorld(): Promise<WorldEngine> {
+  if (world) return world;
+  const { WorldEngine } = await import('./engine/world/engine');
+  const w = new WorldEngine($('world'), settings.quality);
+  await w.init();
+  world = w;
+  return w;
+}
 
 async function loadCesium(): Promise<Engine> {
   if (cesium) return cesium;
@@ -85,7 +108,6 @@ async function applyView(id: ViewId): Promise<boolean> {
       try {
         const c = await loadCesium();
         if (engine !== c) { engine.hide(); engine = c; c.show(); }
-        drone.setCamLimits(c.maxCamTilt);
         drone.holdAGL();
         return true;
       } catch (e) {
@@ -95,9 +117,19 @@ async function applyView(id: ViewId): Promise<boolean> {
         return false;
       }
     }
+    if (id === 'satellite' || id === 'night') {
+      try {
+        const w = await loadWorld();
+        w.setNight(id === 'night');
+        if (engine !== w) { engine.hide(); engine = w; w.show(); }
+        drone.holdAGL();
+        return true;
+      } catch (e) {
+        console.error('3D world unavailable, falling back to the map renderer', e);
+      }
+    }
     await maplibre.setStyle(id, settings.quality);
     if (engine !== maplibre) { engine.hide(); engine = maplibre; maplibre.show(); }
-    drone.setCamLimits(maplibre.maxCamTilt);
     drone.holdAGL();
     return true;
   } finally {
@@ -144,11 +176,12 @@ function frame(now: number) {
     hud.impact(drone.s.impact);
     if (settings.sound) audio.thump(drone.s.impact);
   }
-  engine.setCamera(drone.s);
+  drone.absThrottle = settings.throttle === 'absolute' && !!input.padId;
+  renderView(now);
   const j = drone.s.jitter;
   shakeEl().style.transform = j.x || j.y || j.r ? `translate(${j.x.toFixed(2)}px, ${j.y.toFixed(2)}px) rotate(${j.r.toFixed(3)}deg) scale(1.03)` : '';
   hud.update(drone.s, dt, now);
-  if (settings.sound) audio.update(drone.s, Math.min(1, Math.hypot(drone.s.vE, drone.s.vN, drone.s.vU) / 45));
+  if (settings.sound) audio.update(drone.s);
 
   const moved = Math.hypot((drone.s.lng - lastReverse.lng) * 111_000 * Math.cos(drone.s.lat * Math.PI / 180), (drone.s.lat - lastReverse.lat) * 111_000);
   if (now - lastReverse.t > 9000 && moved > 600) {
@@ -165,11 +198,40 @@ function frame(now: number) {
       if (sf) p.ground = sf.ground;
     }
     const target = discoveries.nearest(drone.s.lat, drone.s.lng);
-    hud.world = { pois: discoveries.pois, isFound: (id) => discoveries.isFound(id), target, vfov: engine.vfov };
+    hud.world = { pois: discoveries.pois, isFound: (id) => discoveries.isFound(id), target };
     $('hud-found').textContent = String(discoveries.passport.length);
   }
 }
 requestAnimationFrame(frame);
+
+// ---------- view: renderer camera + lens pass ----------
+let lastRenderHeading: number | null = null;
+const lensDpr = () => Math.min(window.devicePixelRatio || 1, settings.quality === 'low' ? 1 : 2);
+function currentLens(): Lens {
+  const k = lensPass.ok ? LENS_FX[settings.lens].k : 0;
+  return { tanY: Math.tan((engine.vfov * Math.PI) / 360), aspect: innerWidth / Math.max(1, innerHeight), k };
+}
+/**
+ * The renderer draws the closest view it can (MapLibre can't look above the horizon), then the lens pass rotates
+ * that frame into the true FPV camera, paints the sky around it and applies the lens look.
+ */
+function renderView(now: number) {
+  const s = drone.s;
+  const max = lensPass.ok ? engine.maxCamTilt : Math.min(engine.maxCamTilt, 79);
+  const rc = chooseRenderCam(s.cam, max, lastRenderHeading);
+  lastRenderHeading = rc.heading;
+  engine.setCamera({ lng: s.lng, lat: s.lat, alt: s.alt, ...rc });
+  const lens = currentLens();
+  hud.lens = lens;
+  if (!lensPass.ok) return;
+  const sky = engine.sky();
+  if (sky) lensPass.setSky(sky);
+  const fx = LENS_FX[settings.lens];
+  const fwd = dot([s.vE * s.scale, s.vN * s.scale, s.vU * s.vScale], s.cam.f);
+  const blur = fx.k > 0 ? Math.max(0, Math.min(1, (fwd - 18) / 50)) * 0.03 : 0;
+  lensPass.render(engine.snapshot(), s.cam, basisFrom(rc.heading, rc.pitch, rc.roll), lens, fx, blur, now / 1000);
+}
+lensPass.resize(innerWidth, innerHeight, lensDpr());
 
 // ---------- hash (shareable links) ----------
 function writeHash() {
@@ -206,7 +268,7 @@ async function flyTo(p: Place, instant = false) {
   currentPlaceName = p.sub ? `${p.name} · ${p.sub}` : p.name;
   hud.setLocation(currentPlaceName);
   lastReverse = { t: performance.now(), lng: p.lng, lat: p.lat };
-  engine.setCamera(drone.s);
+  renderView(performance.now());
   closeMenu();
   flying = true;
   writeHash();
@@ -312,12 +374,22 @@ function syncSeg() {
   $('style-seg').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.style === settings.style));
   $('sound-seg').querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b.dataset.sound === 'on') === settings.sound));
   $('quality-seg').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.q === settings.quality));
+  $('lens-seg').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.lens === settings.lens));
+  $('thr-seg').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.thr === settings.throttle));
+  $('hover-wrap').classList.toggle('hidden', settings.throttle !== 'absolute');
   $('key-row').classList.toggle('hidden', !(keyRowOpen || settings.style === 'photoreal'));
   $('key-badge').textContent = googleKey() ? (settings.googleKey ? 'key saved locally' : 'key provided by build') : 'key required';
 }
 seg('style-seg', 'style', (v) => setView(v as ViewId));
 seg('sound-seg', 'sound', (v) => setSound(v === 'on'));
-seg('quality-seg', 'q', (v) => { settings.quality = v as 'high' | 'low'; saveSettings(); syncSeg(); if (mapReady && engine === maplibre) applyView(settings.style); hud.toast('RELOAD FOR FULL EFFECT', 2500); });
+seg('lens-seg', 'lens', (v) => { settings.lens = v as LensMode; saveSettings(); syncSeg(); });
+seg('thr-seg', 'thr', (v) => { settings.throttle = v as Settings['throttle']; saveSettings(); syncSeg(); });
+const hoverEl = $('hover') as HTMLInputElement;
+hoverEl.value = String(Math.round(settings.hover * 100));
+$('hover-v').textContent = `${hoverEl.value}%`;
+hoverEl.addEventListener('input', () => { settings.hover = +hoverEl.value / 100; drone.hover = settings.hover; $('hover-v').textContent = `${hoverEl.value}%`; saveSettings(); });
+drone.hover = settings.hover;
+seg('quality-seg', 'q', (v) => { settings.quality = v as 'high' | 'low'; saveSettings(); syncSeg(); if (mapReady && engine === maplibre) applyView(settings.style); lensPass.resize(innerWidth, innerHeight, lensDpr()); hud.toast('RELOAD FOR FULL EFFECT', 2500); });
 
 const volEl = $('volume') as HTMLInputElement;
 volEl.value = String(Math.round(settings.volume * 100));
@@ -362,7 +434,7 @@ syncSeg();
 // ---------- flight mode ----------
 const MODE_HINT: Record<FlightMode, string> = {
   angle: 'Sticks tilt the quad and it levels itself. Real momentum and gravity; centred throttle holds height.',
-  acro: 'Sticks set rotation rates and the quad keeps its attitude. Bank and pull to turn. Centred throttle = hover thrust.',
+  acro: 'Sticks set rotation rates and the quad keeps its attitude. Flips, rolls and loops all work. Throttle mapping is set under Controller.',
   cine: 'Smooth, assisted flying for sightseeing.',
 };
 function setFlightMode(m: FlightMode, toast = true) {
@@ -565,7 +637,7 @@ function toggleFullscreen() {
   else document.exitFullscreen?.();
 }
 function screenshot() {
-  const mc = engine.snapshot();
+  const mc = lensPass.ok ? lensPass.canvas : engine.snapshot();
   if (!mc) return;
   const out = document.createElement('canvas');
   out.width = mc.width; out.height = mc.height;
@@ -594,6 +666,6 @@ function wait(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
 function esc(s: string) { return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!); }
 
 document.addEventListener('visibilitychange', () => { if (document.hidden) { input.clear(); last = performance.now(); } });
-window.addEventListener('resize', () => { hud.resize(); engine.resize(); });
+window.addEventListener('resize', () => { hud.resize(); engine.resize(); lensPass.resize(innerWidth, innerHeight, lensDpr()); });
 
-if (import.meta.env.DEV) (window as any).__dbg = { get map() { return maplibre.map; }, get engine() { return engine; }, drone, settings };
+if (import.meta.env.DEV) (window as any).__dbg = { get map() { return maplibre.map; }, get engine() { return engine; }, drone, settings, audio };

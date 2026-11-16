@@ -22,7 +22,10 @@ a { color: inherit; }
 .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .hidden { display: none !important; }
 
-#map, #cesium { position: fixed; inset: 0; }
+#map, #cesium, #world { position: fixed; inset: 0; }
+#world canvas { display: block; }
+/* lens pass: the renderer's frame re-projected to the true FPV camera, drawn over it */
+#post { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
 #surface { position: fixed; inset: 0; z-index: 4; cursor: crosshair; touch-action: none; }
 #cesium .cesium-viewer-bottom { bottom: calc(4px + var(--safe-b)); left: calc(10px + var(--safe-l)); }
 #cesium .cesium-widget-credits { font-size: 9px; color: rgba(255,255,255,0.55); }
@@ -199,6 +202,7 @@ button.small:disabled { opacity: 0.4; cursor: default; }
 .slider input { width: 100%; accent-color: var(--accent); }
 .slider b { font: 500 11px var(--font-mono); color: var(--fg); text-align: right; }
 .opt-note { margin: 8px 0 0; font-size: 12px; color: var(--dim); }
+.sub-title { margin: 12px 0 6px; font-size: 10px; letter-spacing: 0.2em; color: var(--dim); text-transform: uppercase; }
 .chip.dim { border-color: rgba(255,255,255,0.3); color: rgba(255,255,255,0.6); }
 .chip.rc { border-color: var(--accent); color: var(--accent); }
 

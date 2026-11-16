@@ -54,8 +54,8 @@ const LIGHTS: Record<StyleId, LightSpecification> = {
 };
 
 /**
- * Sky colours. The map's own sky is made transparent and the app paints this gradient behind the canvas,
- * pinned to the true horizon, so lens-shifted (look-up) views have a continuous sky.
+ * Sky colours. The map's own sky is made transparent and the lens pass (src/post.ts) paints the sky per pixel from the
+ * true camera ray, so looking up, rolling and flying inverted all get a continuous sky.
  */
 export const skyColors = (id: StyleId) => ({
   sky: SKIES[id]['sky-color'] as string,

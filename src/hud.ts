@@ -1,11 +1,11 @@
 import type { DroneState } from './drone';
 import type { Poi } from './discover';
+import { eulerOfBasis, toScreen, type Lens, type V3 } from './camera';
 
 export interface WorldMarks {
   pois: Poi[];
   isFound: (id: number) => boolean;
   target: { poi: Poi; dist: number } | null;
-  vfov: number;
 }
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -28,6 +28,8 @@ export class Hud {
   private dpr = 1;
   visible = true;
   world: WorldMarks | null = null;
+  /** the lens the picture is drawn with, so overlays sit on the world */
+  lens: Lens = { tanY: Math.tan((75 * Math.PI) / 360), aspect: 16 / 9, k: 0 };
 
   constructor() {
     this.resize();
@@ -96,7 +98,7 @@ export class Hud {
       e.batFill.classList.toggle('low', s.battery < 20);
       e.agl.textContent = fmtAlt(s.alt - s.floor);
       e.msl.textContent = fmtAlt(s.alt);
-      const vs = s.vU * Math.min(60, Math.max(1, (s.alt - s.floor) / 150));
+      const vs = s.vU * s.vScale;
       e.vs.textContent = (vs >= 0 ? '+' : '') + vs.toFixed(1);
       e.spd.textContent = fmtSpd(s.groundSpeed * 3.6);
       e.hdg.textContent = String(Math.round(s.heading) % 360).padStart(3, '0');
@@ -147,8 +149,8 @@ export class Hud {
       const found = w.isFound(p.id);
       const g = p.ground ?? s.ground;
       const pillar = 40 + Math.min(260, d * 0.05);
-      const base = project(s, p.lng, p.lat, g, W, H, w.vfov);
-      const top = project(s, p.lng, p.lat, g + pillar, W, H, w.vfov);
+      const base = project(s, this.lens, p.lng, p.lat, g, W, H);
+      const top = project(s, this.lens, p.lng, p.lat, g + pillar, W, H);
       if (!base || !top) continue;
       if (top.x < -100 || top.x > W + 100 || top.y < -100 || top.y > H + 100) continue;
       const near = 1 - Math.min(1, d / 8000);
@@ -275,29 +277,29 @@ export class Hud {
 
     // ---- artificial horizon + crosshair (center) ----
     const cy = H / 2;
-    const vfov = this.world?.vfov ?? 75;
-    const F = H / 2 / Math.tan((vfov * Math.PI) / 360);
-    const camElev = s.camPitch - 90; // camera axis elevation, degrees (negative = looking down)
-    const shift = s.lookUp > 0 ? F * Math.tan((s.lookUp * Math.PI) / 180) : 0;
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(-s.roll * Math.PI / 180);
+    const e = eulerOfBasis(s.cam);
+    const hd = e.heading * DEG;
     const span = Math.min(W, H) * 0.22;
+    ctx.save();
     ctx.strokeStyle = 'rgba(232,241,242,0.7)'; ctx.fillStyle = dim; ctx.font = '500 10px "JetBrains Mono", monospace';
     for (let p = -30; p <= 30; p += 10) {
-      const rel = -p - camElev; // line elevation relative to the camera axis
-      if (Math.abs(rel) > 80) continue;
-      const y = -F * Math.tan((rel * Math.PI) / 180) + shift; // true perspective, plus the lens shift
-      if (Math.abs(y) > H * 0.4) continue;
+      // ladder line = the world direction at this elevation straight ahead, drawn through the lens
+      const el = -p * DEG;
+      const at = toScreen(s.cam, this.lens, [Math.sin(hd) * Math.cos(el), Math.cos(hd) * Math.cos(el), Math.sin(el)], W, H);
+      if (!at || Math.hypot(at.x - cx, at.y - cy) > H * 0.4) continue;
+      ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      ctx.translate(at.x, at.y);
+      ctx.rotate(-e.roll * DEG);
       const w = p === 0 ? span * 1.6 : span * (p % 20 === 0 ? 0.6 : 0.4);
       ctx.globalAlpha = p === 0 ? 0.9 : 0.5;
       ctx.beginPath();
-      if (p === 0) { ctx.moveTo(-w, y); ctx.lineTo(-span * 0.35, y); ctx.moveTo(span * 0.35, y); ctx.lineTo(w, y); }
-      else { ctx.moveTo(-w, y); ctx.lineTo(-span * 0.25, y); ctx.moveTo(span * 0.25, y); ctx.lineTo(w, y); }
+      if (p === 0) { ctx.moveTo(-w, 0); ctx.lineTo(-span * 0.35, 0); ctx.moveTo(span * 0.35, 0); ctx.lineTo(w, 0); }
+      else { ctx.moveTo(-w, 0); ctx.lineTo(-span * 0.25, 0); ctx.moveTo(span * 0.25, 0); ctx.lineTo(w, 0); }
       ctx.stroke();
-      if (p !== 0) { ctx.textAlign = 'right'; ctx.fillText(String(-p), -w - 6, y); ctx.textAlign = 'left'; ctx.fillText(String(-p), w + 6, y); }
+      if (p !== 0) { ctx.textAlign = 'right'; ctx.fillText(String(-p), -w - 6, 0); ctx.textAlign = 'left'; ctx.fillText(String(-p), w + 6, 0); }
     }
     ctx.restore();
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.globalAlpha = 1;
     // crosshair
     ctx.strokeStyle = accent; ctx.lineWidth = 1.5;
@@ -310,7 +312,7 @@ export class Hud {
     ctx.strokeStyle = 'rgba(232,241,242,0.35)'; ctx.lineWidth = 1;
     const rr = Math.min(W, H) * 0.3;
     ctx.beginPath(); ctx.arc(cx, cy, rr, Math.PI * 1.25, Math.PI * 1.75); ctx.stroke();
-    const ra = -Math.PI / 2 - s.roll * Math.PI / 180;
+    const ra = -Math.PI / 2 - e.roll * Math.PI / 180;
     ctx.fillStyle = accent;
     ctx.beginPath(); ctx.moveTo(cx + Math.cos(ra) * rr, cy + Math.sin(ra) * rr); ctx.lineTo(cx + Math.cos(ra - 0.03) * (rr + 10), cy + Math.sin(ra - 0.03) * (rr + 10)); ctx.lineTo(cx + Math.cos(ra + 0.03) * (rr + 10), cy + Math.sin(ra + 0.03) * (rr + 10)); ctx.closePath(); ctx.fill();
 
@@ -324,27 +326,11 @@ export class Hud {
 
 const DEG = Math.PI / 180;
 
-/** Project a world point into screen space using the drone camera (same pose we hand to the renderer). */
-function project(s: DroneState, lng: number, lat: number, h: number, W: number, H: number, vfov: number) {
-  const dE = (lng - s.lng) * 111_320 * Math.cos(s.lat * DEG);
-  const dN = (lat - s.lat) * 111_132;
-  const dU = h - s.alt;
-  const hd = s.heading * DEG, el = (s.camPitch - 90) * DEG;
-  const f = [Math.sin(hd) * Math.cos(el), Math.cos(hd) * Math.cos(el), Math.sin(el)];
-  const r = [Math.cos(hd), -Math.sin(hd), 0];
-  const u = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]];
-  const x = dE * r[0] + dN * r[1] + dU * r[2];
-  const y = dE * u[0] + dN * u[1] + dU * u[2];
-  const z = dE * f[0] + dN * f[1] + dU * f[2];
-  if (z < 1) return null;
-  const F = H / 2 / Math.tan((vfov * DEG) / 2);
-  let sx = (x / z) * F, sy = (-y / z) * F;
-  const a = -s.roll * DEG;
-  const rx = sx * Math.cos(a) - sy * Math.sin(a);
-  const ry = sx * Math.sin(a) + sy * Math.cos(a);
-  const shift = s.lookUp > 0 ? F * Math.tan((s.lookUp * Math.PI) / 180) : 0;
-  const rr = s.roll * DEG;
-  return { x: W / 2 + rx + shift * Math.sin(rr), y: H / 2 + ry + shift * Math.cos(rr), z };
+/** Project a world point into screen space through the FPV camera and lens. */
+function project(s: DroneState, lens: Lens, lng: number, lat: number, h: number, W: number, H: number) {
+  const d: V3 = [(lng - s.lng) * 111_320 * Math.cos(s.lat * DEG), (lat - s.lat) * 111_132, h - s.alt];
+  const p = toScreen(s.cam, lens, d, W, H);
+  return p && p.z >= 1 ? p : null;
 }
 
 function ladderStep(v: number) { return v < 100 ? 10 : v < 1000 ? 50 : v < 10000 ? 500 : 5000; }
