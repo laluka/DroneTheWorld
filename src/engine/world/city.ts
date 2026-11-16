@@ -140,7 +140,7 @@ export class City {
       const k = kAt(latOf(tileY0(z, ty) - size / 2));
       const id = this.nextId++;
       const url = this.template!.replace('{z}', String(z)).replace('{x}', String(tx)).replace('{y}', String(ty));
-      const req: CityReq = { id, url, size, k, treeDensity: this.o.treeDensity, seed: (tx * 92821) ^ (ty * 68917), lite: this.o.lite };
+      const req: CityReq = { id, url, size, k, treeDensity: this.o.treeDensity, seed: (tx * 92821) ^ (ty * 68917), tx, ty, lite: this.o.lite };
       const res = await new Promise<CityRes>((resolve) => { this.waiting.set(id, resolve); this.worker.postMessage(req); });
       const ht = await this.terrain.ensure(z, tx, ty);
       if (this.tiles.get(key) !== tile) return;

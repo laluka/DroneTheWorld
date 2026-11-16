@@ -27,6 +27,10 @@ class Node {
   lastUsed = 0;
   prio = 0;
   noSplit = false;
+  /** drawing its children last frame: keep splitting a bit past the threshold so detail doesn't flicker */
+  split = false;
+  /** grid heights (SEG+1)², for collision against exactly what is drawn */
+  h: Float32Array | null = null;
   constructor(public z: number, public x: number, public y: number, public minH: number, public maxH: number) {}
 }
 
@@ -59,6 +63,7 @@ export class Ground {
   private loading = 0;
   private ready = new Set<Node>();
   private drawn: THREE.Mesh[] = [];
+  private drawnNodes: Node[] = [];
   private topo = gridIndex();
   private box = new THREE.Box3();
   private origin = new THREE.Vector3();
@@ -69,9 +74,27 @@ export class Ground {
 
   get pending() { return this.queue.length + this.loading; }
 
+  /** Height of the ground as drawn this frame at Mercator (X, Y), following the mesh triangles; null if not drawn. */
+  drawnHeightAt(X: number, Y: number): number | null {
+    let best: Node | null = null;
+    for (const nd of this.drawnNodes) {
+      const s = tileSize(nd.z), X0 = tileX0(nd.z, nd.x), Y0 = tileY0(nd.z, nd.y);
+      if (X < X0 || X > X0 + s || Y > Y0 || Y < Y0 - s || !nd.h) continue;
+      if (!best || nd.z > best.z) best = nd;
+    }
+    if (!best) return null;
+    const s = tileSize(best.z);
+    const fx = Math.min(SEG - 1e-6, ((X - tileX0(best.z, best.x)) / s) * SEG), fy = Math.min(SEG - 1e-6, ((tileY0(best.z, best.y) - Y) / s) * SEG);
+    const i = Math.floor(fx), j = Math.floor(fy), u = fx - i, w = fy - j, n = SEG + 1, h = best.h!;
+    const a = h[j * n + i], b = h[j * n + i + 1], c = h[(j + 1) * n + i], d = h[(j + 1) * n + i + 1];
+    // same split as the index buffer: triangles (a, c, b) and (b, c, d)
+    return u + w <= 1 ? a + (b - a) * u + (c - a) * w : d + (c - d) * (1 - u) + (b - d) * (1 - w);
+  }
+
   update(v: View) {
     for (const m of this.drawn) m.visible = false;
     this.drawn = [];
+    this.drawnNodes = [];
     // detail-noise coordinates: world position, wrapped to keep float precision
     this.uniforms.uCamOff.value.set(((v.camX / v.k) % 4096 + 4096) % 4096, ((v.camY / v.k) % 4096 + 4096) % 4096);
 
@@ -106,7 +129,7 @@ export class Ground {
     nd.lastUsed = v.frame;
     const dist = this.box.distanceToPoint(this.origin);
     const sizeReal = tileSize(nd.z) / v.k;
-    if (nd.z < MAX_Z && !nd.noSplit && dist < sizeReal * this.split) {
+    if (nd.z < MAX_Z && !nd.noSplit && dist < sizeReal * this.split * (nd.split ? 1.25 : 1)) {
       if (!nd.kids) {
         nd.kids = [];
         for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) nd.kids.push(new Node(nd.z + 1, nd.x * 2 + i, nd.y * 2 + j, nd.minH, nd.maxH));
@@ -119,10 +142,12 @@ export class Ground {
         if (kd.state !== 'ready') { allReady = false; this.request(kd, this.box.distanceToPoint(this.origin) / (tileSize(kd.z) / v.k)); }
       }
       if (allReady && !nd.noSplit) {
+        nd.split = true;
         for (const kd of nd.kids) this.visit(kd, v);
         return true;
       }
     }
+    nd.split = false;
     if (nd.state === 'ready') { this.draw(nd, v); return true; }
     this.request(nd, dist / sizeReal);
     return false;
@@ -134,6 +159,7 @@ export class Ground {
     m.position.set((tileX0(nd.z, nd.x) - v.camX) / v.k, (tileY0(nd.z, nd.y) - v.camY) / v.k, -v.alt);
     m.scale.set(1 / v.k, 1 / v.k, 1);
     this.drawn.push(m);
+    this.drawnNodes.push(nd);
   }
 
   private request(nd: Node, prio: number) {
@@ -207,6 +233,8 @@ export class Ground {
       o++;
     }
     nd.minH = lo; nd.maxH = hi;
+    nd.h = new Float32Array(n * n);
+    for (let i = 0; i < n * n; i++) nd.h[i] = pos[i * 3 + 2];
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
@@ -234,6 +262,7 @@ export class Ground {
       mat.map?.dispose();
       mat.dispose();
       nd.mesh = null;
+      nd.h = null;
       nd.state = 'idle';
       nd.kids = null;
       this.ready.delete(nd);

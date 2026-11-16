@@ -10,6 +10,8 @@ import earcut from 'earcut';
  */
 export interface CityReq {
   id: number; url: string; size: number; k: number; treeDensity: number; seed: number;
+  /** tile coordinates, for world-stable per-building seeds */
+  tx: number; ty: number;
   /** far ring: buildings only, no clutter / trees / water / lamps */
   lite: boolean;
 }
@@ -252,20 +254,22 @@ async function build(q: CityReq): Promise<CityRes> {
     if (!(H > 1.5)) continue;
     const base = Math.max(0, Number(f.properties.render_min_height ?? 0) || 0);
     if (base >= H) continue;
-    const raw = f.loadGeometry() as Ring[];
-    const rings = clipped(raw, extent);
-    const cut = rings.length !== raw.length || rings.some((r, i) => r.length !== raw[i].length);
-    const polys = polygons(rings);
-    if (!polys.length) continue;
-    // seeded by the OSM id when there is one, so both halves of a building split by a tile border match
-    const first = raw[0][0];
-    const id = Number(f.id ?? 0);
-    const r01 = rng(id ? id * 73856093 : (first.x * 73856093) ^ (first.y * 19349663) ^ q.seed)();
-    const r02 = rng(id ? id * 83492791 + 7 : (first.x * 83492791) ^ (first.y * 2654435761) ^ q.seed)();
-    // lift from the centre of the unclipped outline, the same point in both tiles
+    // OpenMapTiles merges neighbouring buildings of equal height into one multipolygon feature:
+    // every polygon is its own building, with its own ground point and colour.
+    for (const rawPoly of polygons(f.loadGeometry() as Ring[])) {
+    const outer = clipRing(rawPoly[0], extent);
+    if (outer.length < 4) continue;
+    const rings = [outer, ...clipped(rawPoly.slice(1), extent)];
+    const cut = outer.length !== rawPoly[0].length || rings.length !== rawPoly.length;
+    const polys = [rings];
+    // lift from the centre of the unclipped outline: the same point in both tiles when a building crosses a border
     let rcx = 0, rcy = 0;
-    for (let i = 0; i < raw[0].length - 1; i++) { rcx += raw[0][i].x; rcy += raw[0][i].y; }
-    rcx /= Math.max(1, raw[0].length - 1); rcy /= Math.max(1, raw[0].length - 1);
+    for (let i = 0; i < rawPoly[0].length - 1; i++) { rcx += rawPoly[0][i].x; rcy += rawPoly[0][i].y; }
+    rcx /= Math.max(1, rawPoly[0].length - 1); rcy /= Math.max(1, rawPoly[0].length - 1);
+    // colours seeded by that point in world tile units, so both halves of a split building match
+    const wx = Math.round((q.tx * extent + rcx) / 2), wy = Math.round((q.ty * extent + rcy) / 2);
+    const r01 = rng((wx * 73856093) ^ (wy * 19349663))();
+    const r02 = rng((wx * 83492791) ^ (wy * 2654435761) ^ 0x5bd1e995)();
     const tall = H > 40;
     let wall = lin(hex((tall ? TOWERS : WALLS)[Math.floor(r01 * (tall ? TOWERS : WALLS).length)]));
     const c = typeof f.properties.colour === 'string' && /^#[0-9a-f]{6}$/i.test(f.properties.colour) ? lin(hex(f.properties.colour)) : null;
@@ -317,7 +321,7 @@ async function build(q: CityReq): Promise<CityRes> {
           // a hair outward per building so overlapping OSM parts never share a plane (no flicker),
           // and ground-standing walls run below ground so slopes never show a gap under the building
           const push = (0.01 + r01 * 0.04) * q.k, ox = nx * push, oy = ny * push;
-          const foot = base > 0 ? base : -4;
+          const foot = base > 0 ? base : -12;
           const quad: [number, number, number, number][] = [[ax + ox, ay + oy, foot, u], [bx + ox, by + oy, foot, u + ul], [bx + ox, by + oy, eave, u + ul], [ax + ox, ay + oy, eave, u]];
           const order = out > 0 ? [0, 1, 2, 0, 2, 3] : [0, 2, 1, 0, 3, 2];
           for (const k of order) { const v = quad[k]; put(v[0], v[1], v[2], [nx, ny, 0], wall, v[3], v[2], 1, eave, r01); }
@@ -396,6 +400,7 @@ async function build(q: CityReq): Promise<CityRes> {
     }
     cent.push(rcx * s, -rcy * s);
     footprints.push({ minX: minX / s, minY: -maxY / s, maxX: maxX / s, maxY: -minY / s, polys });
+    }
   }
 
   // ---- water surfaces (rivers, lakes, ponds, sea) ----

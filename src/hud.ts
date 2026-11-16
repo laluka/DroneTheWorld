@@ -218,8 +218,7 @@ export class Hud {
     ctx.lineWidth = 1.2;
     ctx.font = '600 11px "JetBrains Mono", monospace';
     ctx.textBaseline = 'middle';
-    ctx.shadowColor = 'rgba(0,0,0,0.9)';
-    ctx.shadowBlur = 3;
+    // no canvas shadowBlur: per-stroke blur cost ~30 fps at Retina sizes; the outline comes from a CSS drop-shadow
 
     // ---- corner brackets ----
     const m = compact ? 10 : 18, L = compact ? 18 : 30;

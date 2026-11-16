@@ -175,7 +175,9 @@ export class WorldEngine implements Engine {
     this.terrain.ensure(TERRAIN_MAX_Z, x, y);
     const t = this.terrain.heightAt(X, Y);
     if (!t || t.z < 10) return null;
-    const ground = t.h;
+    // collide with the ground you can see: while finer terrain streams in, the drawn mesh can sit above the raw data
+    const drawn = this.ground.drawnHeightAt(X, Y);
+    const ground = drawn !== null ? Math.max(t.h, drawn) : t.h;
     this.buildings.prefetch(lng, lat);
     const solids: { base: number; top: number }[] = [];
     for (const v of this.buildings.at(lng, lat) ?? []) solids.push({ base: ground + v.base, top: ground + v.top });
