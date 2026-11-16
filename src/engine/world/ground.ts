@@ -7,8 +7,12 @@ const IMAGERY = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imag
 const MAX_Z = 19;
 const ROOT_Z = 5;
 const SEG = 24;
-const MAX_LOADING = 12;
-const MAX_READY = 650;
+const MAX_LOADING = 16;
+const MAX_READY = 800;
+/** a transient load failure is retried after this long */
+const RETRY_MS = 4000;
+/** below this zoom the drawn mesh is too coarse to collide with (tens of meters off the real ground) */
+const COLLIDE_Z = 15;
 
 /** What the world is seen from this frame. Positions are camera-relative real meters (x east, y north, z up). */
 export interface View {
@@ -19,13 +23,15 @@ export interface View {
   frame: number;
 }
 
-type State = 'idle' | 'queued' | 'loading' | 'ready' | 'failed';
+/** missing: the imagery provider has nothing at this zoom (permanent); failed: transient error, retried later */
+type State = 'idle' | 'queued' | 'loading' | 'ready' | 'failed' | 'missing';
 class Node {
   kids: Node[] | null = null;
   state: State = 'idle';
   mesh: THREE.Mesh | null = null;
   lastUsed = 0;
   prio = 0;
+  retryAt = 0;
   noSplit = false;
   /** drawing its children last frame: keep splitting a bit past the threshold so detail doesn't flicker */
   split = false;
@@ -79,7 +85,7 @@ export class Ground {
     let best: Node | null = null;
     for (const nd of this.drawnNodes) {
       const s = tileSize(nd.z), X0 = tileX0(nd.z, nd.x), Y0 = tileY0(nd.z, nd.y);
-      if (X < X0 || X > X0 + s || Y > Y0 || Y < Y0 - s || !nd.h) continue;
+      if (nd.z < COLLIDE_Z || X < X0 || X > X0 + s || Y > Y0 || Y < Y0 - s || !nd.h) continue;
       if (!best || nd.z > best.z) best = nd;
     }
     if (!best) return null;
@@ -109,6 +115,7 @@ export class Ground {
       if (!r) { r = new Node(ROOT_Z, tx, ty, -100, 5000); this.roots.set(key, r); }
       this.visit(r, v);
     }
+    this.focus(v);
     this.pump(v);
     this.evict(v);
   }
@@ -123,7 +130,12 @@ export class Ground {
 
   private inView(nd: Node, v: View) { return v.frustum.intersectsBox(this.bounds(nd, v)); }
 
-  /** Draws the node or its children; returns false when nothing could be drawn for it yet. */
+  /**
+   * Draws the node or its children; returns false when nothing could be drawn for it yet.
+   * Refinement is per quadrant: ready children draw sharp, and the parent fills only the quadrants still loading
+   * (its shader discards the rest). Waiting for all four children used to collapse a whole region to blurry
+   * low-zoom imagery every time a turn brought one unloaded child into view.
+   */
   private visit(nd: Node, v: View): boolean {
     if (!this.inView(nd, v)) return true;
     nd.lastUsed = v.frame;
@@ -134,37 +146,76 @@ export class Ground {
         nd.kids = [];
         for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) nd.kids.push(new Node(nd.z + 1, nd.x * 2 + i, nd.y * 2 + j, nd.minH, nd.maxH));
       }
-      let allReady = true;
-      for (const kd of nd.kids) {
-        if (!this.inView(kd, v)) continue;
-        kd.lastUsed = v.frame;
-        if (kd.state === 'failed') nd.noSplit = true;
-        if (kd.state !== 'ready') { allReady = false; this.request(kd, this.box.distanceToPoint(this.origin) / (tileSize(kd.z) / v.k)); }
-      }
-      if (allReady && !nd.noSplit) {
+      if (nd.kids.some((kd) => kd.state === 'missing')) nd.noSplit = true;
+      else {
         nd.split = true;
-        for (const kd of nd.kids) this.visit(kd, v);
-        return true;
+        const covered = [0, 0, 0, 0];
+        let all = true;
+        nd.kids.forEach((kd, q) => {
+          kd.lastUsed = v.frame;
+          if (!this.inView(kd, v)) {
+            covered[q] = 1;
+            // coarse levels prefetch off-screen children (low priority), so turning around finds them ready
+            if (kd.state !== 'ready' && nd.z < 15) this.request(kd, 1e7 + dist);
+            return;
+          }
+          const kdist = this.box.distanceToPoint(this.origin);
+          if (kd.state === 'ready') { this.visit(kd, v); covered[q] = 1; }
+          else { all = false; this.request(kd, kdist); }
+        });
+        if (all) return true;
+        if (nd.state === 'ready') { this.draw(nd, v, covered); return true; }
+        this.request(nd, dist);
+        return false;
       }
     }
     nd.split = false;
-    if (nd.state === 'ready') { this.draw(nd, v); return true; }
-    this.request(nd, dist / sizeReal);
+    if (nd.state === 'ready') { this.draw(nd, v, null); return true; }
+    this.request(nd, dist);
     return false;
   }
 
-  private draw(nd: Node, v: View) {
+  /** @param mask quadrants already drawn by children (1 = skip), or null to draw the whole tile */
+  private draw(nd: Node, v: View, mask: number[] | null) {
     const m = nd.mesh!;
     m.visible = true;
     m.position.set((tileX0(nd.z, nd.x) - v.camX) / v.k, (tileY0(nd.z, nd.y) - v.camY) / v.k, -v.alt);
     m.scale.set(1 / v.k, 1 / v.k, 1);
+    const q = mask ?? [0, 0, 0, 0];
+    (m.material as THREE.Material).userData.covered.value.set(q[0], q[1], q[2], q[3]);
     this.drawn.push(m);
     this.drawnNodes.push(nd);
   }
 
-  private request(nd: Node, prio: number) {
-    nd.prio = nd.z * 4 + Math.min(4, prio);
+  /**
+   * Queue a tile, closest first. A parent is never farther than its children, so coarse cover still comes first
+   * where it's needed, but the ground right under you no longer waits behind every coarse tile on screen.
+   */
+  private request(nd: Node, dist: number) {
+    nd.prio = dist;
+    if (nd.state === 'failed' && performance.now() > nd.retryAt) nd.state = 'idle';
     if (nd.state === 'idle') { nd.state = 'queued'; this.queue.push(nd); }
+  }
+
+  /**
+   * Keep the ground under the drone refined and loaded even when it's out of view (looking up, inverted, mid-loop):
+   * collision needs it, and it's there the moment you look down again.
+   */
+  private focus(v: View) {
+    const { x, y } = tileOf(ROOT_Z, v.camX, v.camY);
+    let nd = this.roots.get(`${x}/${y}`);
+    while (nd) {
+      nd.lastUsed = v.frame;
+      if (nd.state !== 'ready') this.request(nd, 0);
+      const sizeReal = tileSize(nd.z) / v.k;
+      if (nd.z >= MAX_Z || nd.noSplit || this.bounds(nd, v).distanceToPoint(this.origin) >= sizeReal * this.split) break;
+      if (!nd.kids) {
+        nd.kids = [];
+        for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) nd.kids.push(new Node(nd.z + 1, nd.x * 2 + i, nd.y * 2 + j, nd.minH, nd.maxH));
+      }
+      const t = tileOf(nd.z + 1, v.camX, v.camY);
+      nd = nd.kids.find((kd) => kd.x === t.x && kd.y === t.y);
+    }
   }
 
   private pump(v: View) {
@@ -184,23 +235,26 @@ export class Ground {
       const tz = Math.min(nd.z, TERRAIN_MAX_Z);
       const sh = nd.z - tz;
       const [tex, ht] = await Promise.all([this.texture(nd), this.terrain.ensure(tz, nd.x >> sh, nd.y >> sh)]);
-      if (!tex) { nd.state = 'failed'; return; }
+      if (tex === 'missing') { nd.state = 'missing'; return; }
       nd.mesh = this.mesh(nd, tex, ht);
       nd.state = 'ready';
       this.ready.add(nd);
     } catch {
+      // network hiccup / rate limit: try again shortly instead of leaving this patch blurry for good
       nd.state = 'failed';
+      nd.retryAt = performance.now() + RETRY_MS;
     } finally {
       this.loading--;
     }
   }
 
-  private async texture(nd: Node): Promise<THREE.Texture | null> {
+  private async texture(nd: Node): Promise<THREE.Texture | 'missing'> {
     const url = IMAGERY.replace('{z}', String(nd.z)).replace('{y}', String(nd.y)).replace('{x}', String(wrapX(nd.z, nd.x)));
     const r = await fetch(url);
-    if (!r.ok) return null;
+    if (r.status === 404) return 'missing';
+    if (!r.ok) throw new Error(`imagery ${r.status}`);
     const bmp = await createImageBitmap(await r.blob());
-    if (nd.z >= 13 && isPlaceholder(bmp)) { bmp.close(); return null; }
+    if (nd.z >= 13 && isPlaceholder(bmp)) { bmp.close(); return 'missing'; }
     const t = new THREE.Texture(bmp);
     t.flipY = false;
     t.colorSpace = THREE.SRGBColorSpace;
@@ -241,6 +295,7 @@ export class Ground {
     g.setIndex(new THREE.BufferAttribute(this.topo.idx, 1));
     g.computeVertexNormals();
     const mat = new THREE.MeshLambertMaterial({ map: tex });
+    mat.userData.covered = { value: new THREE.Vector4() };
     groundDetail(mat, this.uniforms);
     const m = new THREE.Mesh(g, mat);
     m.matrixAutoUpdate = true;
@@ -253,7 +308,12 @@ export class Ground {
 
   private evict(v: View) {
     if (this.ready.size <= MAX_READY) return;
-    const old = [...this.ready].filter((nd) => nd.lastUsed < v.frame - 1 && nd.z > ROOT_Z).sort((a, b) => a.lastUsed - b.lastUsed);
+    // leaves first (a tile whose children hold nothing), least recently used, deepest first;
+    // never drop a tile that still has loaded children, so turning around doesn't reload whole subtrees
+    const leaf = (nd: Node) => !nd.kids || nd.kids.every((k) => k.state !== 'ready' && !k.kids);
+    const old = [...this.ready]
+      .filter((nd) => nd.lastUsed < v.frame - 1 && nd.z > ROOT_Z && leaf(nd))
+      .sort((a, b) => a.lastUsed - b.lastUsed || b.z - a.z);
     for (const nd of old.slice(0, this.ready.size - MAX_READY)) {
       const m = nd.mesh!;
       this.group.remove(m);
@@ -276,12 +336,15 @@ function groundDetail(mat: THREE.MeshLambertMaterial, uniforms: WorldUniforms) {
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uCamOff = uniforms.uCamOff;
     sh.uniforms.uNight = uniforms.uNight;
+    sh.uniforms.uCovered = mat.userData.covered;
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vRel;')
-      .replace('#include <project_vertex>', '#include <project_vertex>\nvRel = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+      .replace('#include <common>', '#include <common>\nvarying vec3 vRel;\nvarying vec2 vQuad;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvRel = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvQuad = uv;');
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
 varying vec3 vRel;
+varying vec2 vQuad;
+uniform vec4 uCovered;
 uniform vec2 uCamOff;
 uniform float uNight;
 float gHash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
@@ -289,6 +352,12 @@ float gNoise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
   vec2 u = f * f * (3.0 - 2.0 * f);
   return mix(mix(gHash(i), gHash(i + vec2(1, 0)), u.x), mix(gHash(i + vec2(0, 1)), gHash(i + vec2(1, 1)), u.x), u.y);
+}`)
+      .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+{
+  // quadrants already drawn by sharper child tiles
+  int q = (vQuad.y >= 0.5 ? 2 : 0) + (vQuad.x >= 0.5 ? 1 : 0);
+  if (uCovered[q] > 0.5) discard;
 }`)
       .replace('#include <map_fragment>', `#include <map_fragment>
 {
@@ -308,15 +377,18 @@ float gNoise(vec2 p) {
  * Where Esri has no imagery at a zoom it serves a flat grey "Map data not yet available" tile instead of a 404.
  * Spot it (uniform light grey) so the parent tile stays on screen.
  */
-const probe = new OffscreenCanvas(8, 8);
+const probe = new OffscreenCanvas(16, 16);
 const probeCtx = probe.getContext('2d', { willReadFrequently: true })!;
 function isPlaceholder(bmp: ImageBitmap) {
-  probeCtx.drawImage(bmp, 0, 0, 8, 8);
-  const d = probeCtx.getImageData(0, 0, 8, 8).data;
-  let grey = 0;
+  // flat light grey with a little text: near-uniform, unlike real (even grey, urban) imagery
+  probeCtx.drawImage(bmp, 0, 0, 16, 16);
+  const d = probeCtx.getImageData(0, 0, 16, 16).data;
+  let sum = 0, sum2 = 0, tint = 0;
   for (let i = 0; i < d.length; i += 4) {
-    const r = d[i], g = d[i + 1], b = d[i + 2];
-    if (Math.abs(r - g) < 6 && Math.abs(g - b) < 6 && r > 185 && r < 235) grey++;
+    const l = (d[i] + d[i + 1] + d[i + 2]) / 3;
+    sum += l; sum2 += l * l;
+    tint = Math.max(tint, Math.abs(d[i] - d[i + 1]), Math.abs(d[i + 1] - d[i + 2]));
   }
-  return grey >= 56;
+  const n = d.length / 4, mean = sum / n, sd = Math.sqrt(Math.max(0, sum2 / n - mean * mean));
+  return mean > 195 && mean < 240 && sd < 7 && tint < 10;
 }
