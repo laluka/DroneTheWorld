@@ -18,6 +18,8 @@ interface CityTile {
   grid: Map<number, Tree[]>;
 }
 const GRID = 24;
+/** near-ring tiles a far ring can step aside for: (2·2+3)² covers radius 2 plus the ring being dropped */
+const MAX_HOLES = 49;
 
 /** Uniforms shared by the world's materials. */
 export interface WorldUniforms {
@@ -57,15 +59,15 @@ export class City {
   private treeGeo = [[broadleaf(true), broadleaf(false)], [conifer(true), conifer(false)]];
   private lampMat: THREE.PointsMaterial;
   private poolMat: THREE.PointsMaterial;
-  /** camera-relative rect (xmin, ymin, xmax, ymax) where a lite ring must not draw */
-  readonly hole = { value: new THREE.Vector4(0, 0, 0, 0) };
+  /** camera-relative rects (xmin, ymin, xmax, ymax) where a lite ring must not draw: the near ring's live tiles */
+  readonly holes = { value: Array.from({ length: MAX_HOLES }, () => new THREE.Vector4()) };
   /** ground height under the drone, to pick tree detail by height above ground */
   lastGround = 0;
   night = false;
 
   constructor(private terrain: TerrainCache, private o: CityOptions, u: WorldUniforms) {
     this.worker.onmessage = (e: MessageEvent<CityRes>) => { this.waiting.get(e.data.id)?.(e.data); this.waiting.delete(e.data.id); };
-    this.material = facadeMaterial(u, o.lite ? this.hole : null);
+    this.material = facadeMaterial(u, o.lite ? this.holes : null);
     this.waterMat = waterMaterial(u);
     const glow = glowTexture();
     this.lampMat = new THREE.PointsMaterial({ map: glow, color: 0xffc27a, size: 7, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
@@ -75,11 +77,16 @@ export class City {
   setTemplate(url: string) { this.template = url; }
   get pending() { return this.loading; }
 
-  /** Camera-relative rect covered by this ring's tiles (what a far ring should leave to it). */
-  coverage(v: View, out: THREE.Vector4) {
-    const { x, y } = tileOf(this.o.z, v.camX, v.camY);
-    const R = this.o.radius, z = this.o.z;
-    out.set((tileX0(z, x - R) - v.camX) / v.k, (tileY0(z, y + R + 1) - v.camY) / v.k, (tileX0(z, x + R + 1) - v.camX) / v.k, (tileY0(z, y - R) - v.camY) / v.k);
+  /** Camera-relative rects of this ring's tiles that are on screen (what a far ring must leave to it). */
+  coverage(v: View, out: THREE.Vector4[]): number {
+    const z = this.o.z;
+    let n = 0;
+    for (const t of this.tiles.values()) {
+      if (t.state !== 'ready' || n >= out.length) continue;
+      out[n++].set((tileX0(z, t.x) - v.camX) / v.k, (tileY0(z, t.y + 1) - v.camY) / v.k, (tileX0(z, t.x + 1) - v.camX) / v.k, (tileY0(z, t.y) - v.camY) / v.k);
+    }
+    for (let i = n; i < out.length; i++) out[i].set(0, 0, 0, 0);
+    return n;
   }
 
   update(v: View) {
@@ -99,7 +106,8 @@ export class City {
     for (const [key, t] of this.tiles) {
       const far = Math.max(Math.abs(t.x - x), Math.abs(t.y - y)) > R + 1;
       if (far && t.state !== 'loading') { this.drop(key, t); continue; }
-      const show = want.has(key);
+      // tiles stay on screen until dropped (one ring out), so nothing blinks when you cross a tile border
+      const show = t.state === 'ready';
       for (const o of t.objects) {
         o.visible = show;
         o.position.set((tileX0(z, t.x) - v.camX) / v.k, (tileY0(z, t.y) - v.camY) / v.k, -v.alt);
@@ -266,7 +274,8 @@ export class City {
     const cx = Math.floor(X / s), cy = Math.floor(Y / s);
     for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
       for (const tr of t.grid.get((cx + dx) * 100003 + (cy + dy)) ?? []) {
-        if (Math.hypot(tr.X - X, tr.Y - Y) / k < tr.r) out.push({ base: tr.base + tr.h * 0.3, top: tr.base + tr.h });
+        // the solid core of the crown: leaves at the edge brush past, branches near the trunk stop you
+        if (Math.hypot(tr.X - X, tr.Y - Y) / k < tr.r * 0.6) out.push({ base: tr.base + tr.h * 0.35, top: tr.base + tr.h * 0.92 });
       }
     }
     return out;
@@ -348,12 +357,12 @@ function paint(parts: THREE.BufferGeometry[], colors: number[]) {
  * curtain walls on some towers), glass that reflects the sky and lights up at night, contact shadow at the base,
  * a coping band on flat roofs and roof grain. A far-ring variant discards itself inside the near ring.
  */
-function facadeMaterial(u: WorldUniforms, hole: { value: THREE.Vector4 } | null) {
+function facadeMaterial(u: WorldUniforms, hole: { value: THREE.Vector4[] } | null) {
   const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.88, metalness: 0 });
   m.customProgramCacheKey = () => (hole ? 'facade-far' : 'facade');
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uNight = u.uNight;
-    if (hole) sh.uniforms.uHole = hole;
+    if (hole) sh.uniforms.uHoles = hole;
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nattribute vec4 aFac;\nattribute float aSeed;\nvarying vec4 vFac;\nvarying float vSeed;\nvarying vec2 vRelXY;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFac = aFac; vSeed = aSeed;')
@@ -364,7 +373,7 @@ varying vec4 vFac;
 varying float vSeed;
 varying vec2 vRelXY;
 uniform float uNight;
-${hole ? 'uniform vec4 uHole;' : ''}
+${hole ? `uniform vec4 uHoles[${MAX_HOLES}];` : ''}
 float fHash(vec2 p) { p = fract(p * vec2(233.34, 851.73)); p += dot(p, p + 23.45); return fract(p.x * p.y); }
 float fNoise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
@@ -372,7 +381,7 @@ float fNoise(vec2 p) {
   return mix(mix(fHash(i), fHash(i + vec2(1, 0)), u.x), mix(fHash(i + vec2(0, 1)), fHash(i + vec2(1, 1)), u.x), u.y);
 }`)
       .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
-${hole ? 'if (vRelXY.x > uHole.x && vRelXY.x < uHole.z && vRelXY.y > uHole.y && vRelXY.y < uHole.w) discard;' : ''}`)
+${hole ? `for (int i = 0; i < ${MAX_HOLES}; i++) { vec4 h = uHoles[i]; if (vRelXY.x > h.x && vRelXY.x < h.z && vRelXY.y > h.y && vRelXY.y < h.w) discard; }` : ''}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
 float gWin = 0.0;
 float gLit = 0.0;

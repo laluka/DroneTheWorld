@@ -22,6 +22,8 @@ const VIEW_IDS: ViewId[] = [...STYLE_IDS, 'photoreal'];
 // ---------- settings (persisted) ----------
 interface Settings {
   v: number; flightMode: FlightMode; style: ViewId; sound: boolean; volume: number; quality: 'high' | 'low'; googleKey: string; keyRates: number;
+  /** turbo is the normal state (hold Shift / the turbo button for normal power) */
+  turbo: boolean;
   /** FPV feed look */
   lens: LensMode;
   /** radio throttle: centre = hover, or absolute (idle at the bottom, like a real quad) */
@@ -29,15 +31,15 @@ interface Settings {
   /** absolute throttle: stick position that hovers, 0..1 */
   hover: number;
 }
-const SETTINGS_VERSION = 3;
-const DEFAULTS: Settings = { v: SETTINGS_VERSION, flightMode: 'acro', style: 'satellite', sound: false, volume: 0.6, quality: 'high', googleKey: '', keyRates: 1, lens: 'fpv', throttle: 'centered', hover: 0.35 };
+const SETTINGS_VERSION = 4;
+const DEFAULTS: Settings = { v: SETTINGS_VERSION, flightMode: 'acro', style: 'satellite', sound: false, volume: 0.6, quality: 'high', googleKey: '', keyRates: 1, turbo: true, lens: 'fpv', throttle: 'centered', hover: 0.35 };
 const settings: Settings = (() => {
   let saved: Partial<Settings> = {};
   try { saved = JSON.parse(localStorage.getItem('drone.settings') || '{}'); } catch { /* ignore */ }
   // v2: everyone starts again on the sunny satellite view
   if ((saved.v ?? 0) < 2) delete saved.style;
-  // v3: acro is the default flight mode
-  if ((saved.v ?? 0) < 3) delete saved.flightMode;
+  // v4: turbo acro is the default
+  if ((saved.v ?? 0) < 4) { delete saved.flightMode; delete saved.turbo; }
   saved.v = SETTINGS_VERSION;
   return { ...DEFAULTS, ...saved };
 })();
@@ -148,9 +150,11 @@ maplibre.whenLoaded().then(async () => {
 // tile loading indicator
 const loading = $('loading');
 let loadingShown = false;
+let lastArrival = 0;
 setInterval(() => {
   if (!flying) { if (loadingShown) { loading.classList.remove('on'); loadingShown = false; } return; }
-  const show = !engine.tilesLoaded();
+  // only while a place is first loading: the 3D world streams tiles all the time and the badge would blink forever
+  const show = !engine.tilesLoaded() && performance.now() - lastArrival < 8000;
   if (show !== loadingShown) { loading.classList.toggle('on', show); loadingShown = show; }
 }, 400);
 
@@ -228,7 +232,7 @@ function renderView(now: number) {
   if (sky) lensPass.setSky(sky);
   const fx = LENS_FX[settings.lens];
   const fwd = dot([s.vE * s.scale, s.vN * s.scale, s.vU * s.vScale], s.cam.f);
-  const blur = fx.k > 0 ? Math.max(0, Math.min(1, (fwd - 18) / 50)) * 0.03 : 0;
+  const blur = fx.k > 0 ? Math.max(0, Math.min(1, (fwd - 25) / 90)) * 0.012 : 0;
   lensPass.render(engine.snapshot(), s.cam, basisFrom(rc.heading, rc.pitch, rc.roll), lens, fx, blur, now / 1000);
 }
 lensPass.resize(innerWidth, innerHeight, lensDpr());
@@ -264,6 +268,7 @@ async function flyTo(p: Place, instant = false) {
   lastPlace = p;
   if (!instant) { fade.classList.add('on'); await wait(420); }
   drone.teleport(p.lng, p.lat, p.heading, p.agl, p.pitch ?? 84);
+  lastArrival = performance.now();
   discoveries.reset();
   currentPlaceName = p.sub ? `${p.name} · ${p.sub}` : p.name;
   hud.setLocation(currentPlaceName);
@@ -447,6 +452,16 @@ function setFlightMode(m: FlightMode, toast = true) {
 $('mode-seg').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => setFlightMode(b.dataset.mode as FlightMode)));
 setFlightMode(settings.flightMode, false);
 
+// ---------- turbo ----------
+function setTurbo(on: boolean, toast = true) {
+  settings.turbo = on; saveSettings();
+  input.turbo = on;
+  $('turbo-seg').querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b.dataset.turbo === 'on') === on));
+  if (toast) hud.toast(on ? 'TURBO ON' : 'TURBO OFF');
+}
+seg('turbo-seg', 'turbo', (v) => setTurbo(v === 'on'));
+setTurbo(settings.turbo, false);
+
 // ---------- discoveries ----------
 const card = $('discovery');
 let cardTimer = 0;
@@ -606,6 +621,7 @@ input.onKey = (code, ev) => {
   switch (code) {
     case 'KeyM': setView(VIEW_IDS[(VIEW_IDS.indexOf(settings.style) + 1) % (googleKey() ? VIEW_IDS.length : STYLE_IDS.length)]); break;
     case 'KeyH': hud.toggle(); break;
+    case 'KeyT': setTurbo(!settings.turbo); break;
     case 'KeyV': setFlightMode(FLIGHT_MODES[(FLIGHT_MODES.indexOf(settings.flightMode) + 1) % FLIGHT_MODES.length]); break;
     case 'KeyR': drone.levelCamera(); hud.toast('CAMERA RESET'); break;
     case 'Backspace': if (lastPlace) { ev.preventDefault(); flyTo(lastPlace); } break;

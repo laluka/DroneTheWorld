@@ -23,7 +23,7 @@ Pure frontend, no backend, no account: a static site that runs on GitHub Pages.
 
 - **Angle**: sticks tilt the quad, it levels itself when released. Real thrust, gravity and momentum;
   centred throttle holds altitude. Best on keyboard.
-- **Acro** (default): sticks command rotation rates (Betaflight "BF" rates: RC rate 1.0, super rate 0.7, ~670°/s); the quad keeps its attitude.
+- **Acro** (default, with turbo on; `T` toggles turbo, holding `Shift` or the pad's turbo button flips it): sticks command rotation rates (Betaflight "BF" rates: RC rate 1.0, super rate 0.7, ~670°/s); the quad keeps its attitude.
   Bank and pull to carve turns. Flips, rolls, loops, split-S and inverted flight all work.
 - **Cine**: smooth assisted flight for sightseeing.
 
@@ -77,7 +77,7 @@ through the same pass for the lens look.
 | `A` `D` / `←` `→` | roll (strafe) |
 | `Q` `E` | yaw |
 | `Space` / `C` | throttle up / down |
-| `Shift` | turbo |
+| `T` / `Shift` (hold) | turbo on / off (on by default) / flip it while held |
 | mouse drag | yaw + camera tilt · wheel: altitude |
 | `I` `K` / `R` | camera tilt / reset |
 | `Backspace` | back to the launch point |
@@ -87,7 +87,7 @@ through the same pass for the lens look.
 **Radio controller first.** Any controller the browser sees as a gamepad works, including DJI remotes over USB
 (DJI FPV Remote Controller 2 / 3 and other HID-joystick radios). The first time a controller connects, a short
 wizard opens: leave the sticks at rest, push throttle up, yaw right, pitch forward, roll right, then optionally press
-a turbo button and flip a flight-mode switch (positions select Angle / Cine / Acro, a button cycles them).
+a turbo button. Flight modes are picked in the menu (or `V`); a mode switch saved by an older calibration only acts when flipped.
 Axis order, direction and rest position are saved per controller; deadzone and expo are adjustable in the menu.
 DJI remotes start from a DJI layout guess, but run the wizard anyway: stick layouts differ between firmwares.
 The OSD shows `RC` when the controller is flying, and a DVR-style stick overlay so you can see your inputs.

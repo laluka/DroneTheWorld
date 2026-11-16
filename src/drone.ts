@@ -71,8 +71,10 @@ const deg = Math.PI / 180;
 const TUNE = {
   // shared
   lookSens: 0.18,
-  minAGL: 1.5,
-  bodyRadius: 2.5,
+  /** camera height when resting on the ground / a roof */
+  minAGL: 0.4,
+  /** collision radius: a 5" quad is ~25 cm across; a little margin so walls don't fill the lens */
+  bodyRadius: 0.6,
   maxAGL: 18000,
   // cine (velocity based)
   acc: 24, accBoost: 48, drag: 0.75, maxSpeed: 32, maxSpeedBoost: 60,

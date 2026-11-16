@@ -75,7 +75,8 @@ export function readAxis(pad: Gamepad, m: GamepadMap, name: AxisName): number {
 }
 
 export type CalibStep = 'rest' | AxisName | 'turbo' | 'switch' | 'done';
-export const STEPS: CalibStep[] = ['rest', 'throttle', 'yaw', 'pitch', 'roll', 'turbo', 'switch', 'done'];
+/** The wizard maps sticks and an optional turbo button; flight modes stay a menu / keyboard choice. */
+export const STEPS: CalibStep[] = ['rest', 'throttle', 'yaw', 'pitch', 'roll', 'turbo', 'done'];
 
 export const STEP_TEXT: Record<CalibStep, { title: string; hint: string }> = {
   rest: { title: 'Leave both sticks at rest', hint: 'Throttle at hover position (center for DJI N/S modes, mid-stick in M mode).' },
@@ -83,7 +84,7 @@ export const STEP_TEXT: Record<CalibStep, { title: string; hint: string }> = {
   yaw: { title: 'Push YAW right', hint: 'Then let it return to rest.' },
   pitch: { title: 'Push PITCH forward', hint: 'Then let it return to rest.' },
   roll: { title: 'Push ROLL right', hint: 'Then let it return to rest.' },
-  turbo: { title: 'Press the button to use for TURBO', hint: 'Optional: any button, or skip.' },
+  turbo: { title: 'Press the button to use for TURBO', hint: 'Optional: hold it to switch turbo off (or on, if you fly without it). Any button, or skip.' },
   switch: { title: 'Flip your FLIGHT MODE switch', hint: 'Optional: a switch or button. Positions pick Angle / Cine / Acro, a button cycles them. Or skip.' },
   done: { title: 'Controller mapped', hint: 'Settings saved for this controller.' },
 };

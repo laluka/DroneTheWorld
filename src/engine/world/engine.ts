@@ -137,7 +137,7 @@ export class WorldEngine implements Engine {
     this.uniforms.uTime.value = time;
     this.ground.update(view);
     this.city.update(view);
-    this.city.coverage(view, this.skyline.hole.value);
+    this.city.coverage(view, this.skyline.holes.value);
     this.skyline.update(view);
 
     const su = this.dome.material.uniforms;
@@ -148,10 +148,18 @@ export class WorldEngine implements Engine {
     this.fog.density = (this.isNight ? 1.4 : 1) / (9000 + agl * 22);
     // sun shadows around the ground point you're looking at, sized to the altitude
     const reach = Math.min(agl, 600);
-    const tx = b.f[0] * reach * 0.6, ty = b.f[1] * reach * 0.6;
-    this.sun.target.position.set(tx, ty, -agl);
-    this.sun.position.set(tx + this.sunDir.x * 3000, ty + this.sunDir.y * 3000, -agl + this.sunDir.z * 3000);
-    const half = 220 + reach * 0.6;
+    const half = Math.ceil((220 + reach * 0.6) / 50) * 50; // stepped, so the shadow map doesn't rescale every frame
+    // Snap the shadow frustum to whole shadow-map texels in world space, so shadows don't shimmer as the drone moves.
+    const texel = (half * 2) / this.sun.shadow.mapSize.x;
+    // axes of the shadow camera (three's lookAt: z toward the light, x = up × z with up = +Y)
+    const lz = this.sunDir, lx = new THREE.Vector3(0, 1, 0).cross(lz).normalize(), ly = lz.clone().cross(lx);
+    const W = new THREE.Vector3(view.camX / k + b.f[0] * reach * 0.6, view.camY / k + b.f[1] * reach * 0.6, (g?.h ?? 0));
+    const px = W.dot(lx), py = W.dot(ly);
+    W.addScaledVector(lx, Math.round(px / texel) * texel - px).addScaledVector(ly, Math.round(py / texel) * texel - py);
+    const tx = W.x - view.camX / k, ty = W.y - view.camY / k;
+    const tz = W.z - c.alt;
+    this.sun.target.position.set(tx, ty, tz);
+    this.sun.position.set(tx + this.sunDir.x * 3000, ty + this.sunDir.y * 3000, tz + this.sunDir.z * 3000);
     const sc = this.sun.shadow.camera;
     if (sc.right !== half) { sc.left = -half; sc.right = half; sc.top = half; sc.bottom = -half; sc.near = 10; sc.far = 6000; sc.updateProjectionMatrix(); }
     this.sun.castShadow = this.quality === 'high' && agl < 1500 && !this.isNight;

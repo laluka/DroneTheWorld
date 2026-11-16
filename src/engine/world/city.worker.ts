@@ -50,6 +50,35 @@ function rng(seed: number) {
 type Ring = { x: number; y: number }[];
 const area = (r: Ring) => { let a = 0; for (let i = 0, j = r.length - 1; i < r.length; j = i++) a += (r[j].x - r[i].x) * (r[j].y + r[i].y); return a / 2; };
 
+/**
+ * Clip a closed ring to the tile square [0, ext]² (Sutherland–Hodgman). Vector tiles carry a buffer past their edge,
+ * so without this a building or lake crossing a tile border is drawn twice, overlapping its neighbour's copy.
+ */
+function clipRing(ring: Ring, ext: number): Ring {
+  let pts = ring.slice(0, -1);
+  const edges: [(p: { x: number; y: number }) => boolean, (a: { x: number; y: number }, b: { x: number; y: number }) => { x: number; y: number }][] = [
+    [(p) => p.x >= 0, (a, b) => ({ x: 0, y: a.y + ((b.y - a.y) * (0 - a.x)) / (b.x - a.x) })],
+    [(p) => p.x <= ext, (a, b) => ({ x: ext, y: a.y + ((b.y - a.y) * (ext - a.x)) / (b.x - a.x) })],
+    [(p) => p.y >= 0, (a, b) => ({ x: a.x + ((b.x - a.x) * (0 - a.y)) / (b.y - a.y), y: 0 })],
+    [(p) => p.y <= ext, (a, b) => ({ x: a.x + ((b.x - a.x) * (ext - a.y)) / (b.y - a.y), y: ext })],
+  ];
+  for (const [inside, cut] of edges) {
+    if (!pts.length) break;
+    const out: { x: number; y: number }[] = [];
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[(i + pts.length - 1) % pts.length], b = pts[i];
+      if (inside(b)) { if (!inside(a)) out.push(cut(a, b)); out.push(b); }
+      else if (inside(a)) out.push(cut(a, b));
+    }
+    pts = out;
+  }
+  return pts.length >= 3 ? [...pts, pts[0]] : [];
+}
+const clipped = (rings: Ring[], ext: number) => rings.map((r) => clipRing(r, ext)).filter((r) => r.length >= 4);
+/** True for a wall lying on the tile border: that's where a clipped building continues in the next tile. */
+const onBorder = (a: { x: number; y: number }, b: { x: number; y: number }, ext: number) =>
+  (a.x <= 0 && b.x <= 0) || (a.x >= ext && b.x >= ext) || (a.y <= 0 && b.y <= 0) || (a.y >= ext && b.y >= ext);
+
 /** Split MVT rings into polygons: a ring with the first ring's winding starts a new polygon, the others are its holes. */
 function polygons(rings: Ring[]) {
   const out: Ring[][] = [];
@@ -223,11 +252,20 @@ async function build(q: CityReq): Promise<CityRes> {
     if (!(H > 1.5)) continue;
     const base = Math.max(0, Number(f.properties.render_min_height ?? 0) || 0);
     if (base >= H) continue;
-    const polys = polygons(f.loadGeometry() as Ring[]);
+    const raw = f.loadGeometry() as Ring[];
+    const rings = clipped(raw, extent);
+    const cut = rings.length !== raw.length || rings.some((r, i) => r.length !== raw[i].length);
+    const polys = polygons(rings);
     if (!polys.length) continue;
-    const first = polys[0][0][0];
-    const r01 = rng((first.x * 73856093) ^ (first.y * 19349663) ^ q.seed)();
-    const r02 = rng((first.x * 83492791) ^ (first.y * 2654435761) ^ q.seed)();
+    // seeded by the OSM id when there is one, so both halves of a building split by a tile border match
+    const first = raw[0][0];
+    const id = Number(f.id ?? 0);
+    const r01 = rng(id ? id * 73856093 : (first.x * 73856093) ^ (first.y * 19349663) ^ q.seed)();
+    const r02 = rng(id ? id * 83492791 + 7 : (first.x * 83492791) ^ (first.y * 2654435761) ^ q.seed)();
+    // lift from the centre of the unclipped outline, the same point in both tiles
+    let rcx = 0, rcy = 0;
+    for (let i = 0; i < raw[0].length - 1; i++) { rcx += raw[0][i].x; rcy += raw[0][i].y; }
+    rcx /= Math.max(1, raw[0].length - 1); rcy /= Math.max(1, raw[0].length - 1);
     const tall = H > 40;
     let wall = lin(hex((tall ? TOWERS : WALLS)[Math.floor(r01 * (tall ? TOWERS : WALLS).length)]));
     const c = typeof f.properties.colour === 'string' && /^#[0-9a-f]{6}$/i.test(f.properties.colour) ? lin(hex(f.properties.colour)) : null;
@@ -253,13 +291,12 @@ async function build(q: CityReq): Promise<CityRes> {
     };
 
     // Small, simple, roughly rectangular buildings get a pitched roof (gable or hipped), like most houses.
-    const rect = !q.lite && polys.length === 1 && polys[0].length === 1 && base === 0 && H <= 16 ? rectOf(polys[0][0], s, q.k) : null;
+    const rect = !q.lite && !cut && polys.length === 1 && polys[0].length === 1 && base === 0 && H <= 16 ? rectOf(polys[0][0], s, q.k) : null;
     const pitched = rect && rect.area > 25 && rect.area < 900 && r02 < 0.85 ? rect : null;
     const pitch = ((30 + r02 * 12) * Math.PI) / 180;
     const rise = pitched ? Math.min((Math.tan(pitch) * pitched.short) / 2, H * 0.45, 7) : 0;
     const eave = H - rise;
     const roof = lin(hex(pitched ? TILES[Math.floor(r02 * 997) % TILES.length] : ROOFS[Math.floor(r02 * ROOFS.length)]));
-    let cx = 0, cy = 0, cn = 0;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 
     for (const poly of polys) {
@@ -274,13 +311,17 @@ async function build(q: CityReq): Promise<CityRes> {
           const dx = bx - ax, dy = by - ay;
           const len = Math.hypot(dx, dy);
           if (len < 1e-6) continue;
-          const nx = (dy / len) * out, ny = (-dx / len) * out;
           const ul = len / q.k;
-          const quad: [number, number, number, number][] = [[ax, ay, base, u], [bx, by, base, u + ul], [bx, by, eave, u + ul], [ax, ay, eave, u]];
+          if (onBorder(a, b, extent)) { u += ul; continue; }
+          const nx = (dy / len) * out, ny = (-dx / len) * out;
+          // a hair outward per building so overlapping OSM parts never share a plane (no flicker),
+          // and ground-standing walls run below ground so slopes never show a gap under the building
+          const push = (0.01 + r01 * 0.04) * q.k, ox = nx * push, oy = ny * push;
+          const foot = base > 0 ? base : -4;
+          const quad: [number, number, number, number][] = [[ax + ox, ay + oy, foot, u], [bx + ox, by + oy, foot, u + ul], [bx + ox, by + oy, eave, u + ul], [ax + ox, ay + oy, eave, u]];
           const order = out > 0 ? [0, 1, 2, 0, 2, 3] : [0, 2, 1, 0, 3, 2];
           for (const k of order) { const v = quad[k]; put(v[0], v[1], v[2], [nx, ny, 0], wall, v[3], v[2], 1, eave, r01); }
           u += ul;
-          cx += ax; cy += ay; cn++;
           if (ax < minX) minX = ax; if (ax > maxX) maxX = ax; if (ay < minY) minY = ay; if (ay > maxY) maxY = ay;
         }
       });
@@ -317,7 +358,8 @@ async function build(q: CityReq): Promise<CityRes> {
         let [a, b, c2] = [tri[t], tri[t + 1], tri[t + 2]];
         const cross = (flat[b * 2] - flat[a * 2]) * (flat[c2 * 2 + 1] - flat[a * 2 + 1]) - (flat[b * 2 + 1] - flat[a * 2 + 1]) * (flat[c2 * 2] - flat[a * 2]);
         if (cross < 0) [b, c2] = [c2, b];
-        for (const k of [a, b, c2]) put(flat[k * 2], flat[k * 2 + 1], H, [0, 0, 1], roof, flat[k * 2] / q.k, flat[k * 2 + 1] / q.k, 0, H, r02);
+        const hz = H + r01 * 0.05;
+        for (const k of [a, b, c2]) put(flat[k * 2], flat[k * 2 + 1], hz, [0, 0, 1], roof, flat[k * 2] / q.k, flat[k * 2 + 1] / q.k, 0, H, r02);
         if (base > 0) for (const k of [a, c2, b]) put(flat[k * 2], flat[k * 2 + 1], base, [0, 0, -1], wall, 0, base, -1, H, r01);
       }
 
@@ -352,7 +394,7 @@ async function build(q: CityReq): Promise<CityRes> {
         }
       }
     }
-    cent.push(cn ? cx / cn : 0, cn ? cy / cn : 0);
+    cent.push(rcx * s, -rcy * s);
     footprints.push({ minX: minX / s, minY: -maxY / s, maxX: maxX / s, maxY: -minY / s, polys });
   }
 
@@ -363,7 +405,7 @@ async function build(q: CityReq): Promise<CityRes> {
   if (wl) for (let i = 0; i < wl.length; i++) {
     const f = wl.feature(i);
     if (f.type !== 3 || f.properties.brunnel === 'tunnel' || f.properties.class === 'swimming_pool') continue;
-    for (const poly of polygons(f.loadGeometry() as Ring[])) {
+    for (const poly of polygons(clipped(f.loadGeometry() as Ring[], extent))) {
       waterPolys.push(poly);
       const flat: number[] = [], holes: number[] = [];
       poly.forEach((ring, ri) => {

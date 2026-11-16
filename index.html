@@ -60,7 +60,7 @@
         <div class="stat"><label>DIST</label><b class="mono" id="hud-dist">0.0</b><u>km</u></div>
       </div>
       <div class="hud-bc">
-        <span class="hint" id="hud-hint">W S pitch · A D roll · Q E yaw · SPACE / C throttle · drag: yaw + camera · SHIFT turbo · ⌫ reset · ESC menu</span>
+        <span class="hint" id="hud-hint">W S pitch · A D roll · Q E yaw · SPACE / C throttle · drag: yaw + camera · T turbo · SHIFT hold flips it · ⌫ reset · ESC menu</span>
       </div>
       <div class="hud-attrib">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> · <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> · Imagery © Esri, Maxar, Earthstar Geographics · Terrain: Mapzen / AWS</div>
       <div id="toast"></div>
@@ -105,6 +105,10 @@
           <button data-mode="angle" class="active">Angle</button>
           <button data-mode="acro">Acro</button>
           <button data-mode="cine">Cine</button>
+        </div>
+        <div class="seg turbo-seg" id="turbo-seg">
+          <button data-turbo="on" class="active">Turbo on</button>
+          <button data-turbo="off">Turbo off</button>
         </div>
         <p class="opt-note" id="mode-hint"></p>
 
@@ -208,7 +212,8 @@
             <div><kbd>A</kbd><kbd>D</kbd> or <kbd>←</kbd><kbd>→</kbd> <em>roll (strafe)</em></div>
             <div><kbd>Q</kbd><kbd>E</kbd> <em>yaw</em></div>
             <div><kbd>Space</kbd> / <kbd>C</kbd> <em>throttle up / down (released = hover)</em></div>
-            <div><kbd>Shift</kbd> <em>turbo</em></div>
+            <div><kbd>T</kbd> <em>turbo on / off</em></div>
+            <div><kbd>Shift</kbd> <em>hold: flip turbo</em></div>
             <div><kbd>V</kbd> <em>flight mode: angle / acro / cine</em></div>
             <div><kbd>Mouse drag</kbd> <em>yaw + camera uptilt</em></div>
             <div><kbd>Wheel</kbd> <em>altitude</em></div>

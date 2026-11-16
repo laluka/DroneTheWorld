@@ -91,6 +91,8 @@ export class Input {
   private stickR?: VirtualStick;
   private ramps = { pitch: new Ramp(), roll: new Ramp(), yaw: new Ramp(), throttle: new Ramp() };
   touchBoost = false;
+  /** Turbo is the normal state; holding Shift / the turbo button flips it for as long as it's held. */
+  turbo = true;
   enabled = true;
   /** Keyboard sensitivity multiplier for yaw/throttle (menu "rates"). */
   keyRates = 1;
@@ -193,7 +195,7 @@ export class Input {
       if (Math.abs(v) > 0.02) active = true;
       c[name] += v;
     }
-    if (m.turboButton !== null && p.buttons[m.turboButton]?.pressed) { c.boost = true; active = true; }
+    if (m.turboButton !== null && p.buttons[m.turboButton]?.pressed) { c.boost = !c.boost; active = true; }
     if (m.modeSwitch) {
       const sw = m.modeSwitch;
       if (sw.kind === 'button') {
@@ -203,7 +205,8 @@ export class Input {
       } else {
         const raw = p.axes[sw.index] ?? 0;
         const pos = raw < -0.33 ? 0 : raw > 0.33 ? 2 : 1;
-        if (this.switchPrev !== pos) this.padModeRequest = (['angle', 'cine', 'acro'] as const)[pos];
+        // only an actual flip changes the mode: where the switch happens to sit on connect doesn't override the menu
+        if (this.switchPrev !== null && this.switchPrev !== pos) this.padModeRequest = (['angle', 'cine', 'acro'] as const)[pos];
         this.switchPrev = pos;
       }
     }
@@ -225,7 +228,7 @@ export class Input {
       throttle: kThr,
       yaw: kYaw,
       gimbal: this.key('KeyI') - this.key('KeyK'),
-      boost: this.key('ShiftLeft', 'ShiftRight') === 1 || this.touchBoost,
+      boost: this.turbo !== (this.key('ShiftLeft', 'ShiftRight') === 1 || this.touchBoost),
       lookDX: this.lookDX,
       lookDY: this.lookDY,
       wheel: this.wheel,

@@ -174,6 +174,7 @@ export class Ground {
     const r = await fetch(url);
     if (!r.ok) return null;
     const bmp = await createImageBitmap(await r.blob());
+    if (nd.z >= 13 && isPlaceholder(bmp)) { bmp.close(); return null; }
     const t = new THREE.Texture(bmp);
     t.flipY = false;
     t.colorSpace = THREE.SRGBColorSpace;
@@ -272,4 +273,21 @@ float gNoise(vec2 p) {
   diffuseColor.rgb *= mix(vec3(1.0), vec3(0.22, 0.25, 0.36), uNight);
 }`);
   };
+}
+
+/**
+ * Where Esri has no imagery at a zoom it serves a flat grey "Map data not yet available" tile instead of a 404.
+ * Spot it (uniform light grey) so the parent tile stays on screen.
+ */
+const probe = new OffscreenCanvas(8, 8);
+const probeCtx = probe.getContext('2d', { willReadFrequently: true })!;
+function isPlaceholder(bmp: ImageBitmap) {
+  probeCtx.drawImage(bmp, 0, 0, 8, 8);
+  const d = probeCtx.getImageData(0, 0, 8, 8).data;
+  let grey = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i], g = d[i + 1], b = d[i + 2];
+    if (Math.abs(r - g) < 6 && Math.abs(g - b) < 6 && r > 185 && r < 235) grey++;
+  }
+  return grey >= 56;
 }

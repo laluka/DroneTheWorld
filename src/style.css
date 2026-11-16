@@ -294,3 +294,5 @@ kbd { font: 600 11px var(--font-mono); padding: 2px 6px; border-radius: 5px; bac
 .guide a { color: var(--accent-2); }
 .guide code { font: 500 12px var(--font-mono); background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 4px; user-select: all; }
 .guide-note { color: var(--dim) !important; }
+
+.turbo-seg { margin-top: 8px; }
