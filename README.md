@@ -85,11 +85,11 @@ through the same pass for the lens look.
 | `1`–`9` | jump to preset · `Esc` menu |
 
 **Radio controller first.** Any controller the browser sees as a gamepad works, including DJI remotes over USB
-(DJI FPV Remote Controller 2 / 3 and other HID-joystick radios). The first time a controller connects, a short
-wizard opens: leave the sticks at rest, push throttle up, yaw right, pitch forward, roll right, then optionally press
+(DJI FPV Remote Controller 2 / 3 and other HID-joystick radios). From the menu (Controller → Calibrate sticks), an optional
+wizard maps it: leave the sticks at rest, push throttle up, yaw right, pitch forward, roll right, then optionally press
 a turbo button. Flight modes are picked in the menu (or `V`); a mode switch saved by an older calibration only acts when flipped.
 Axis order, direction and rest position are saved per controller; deadzone and expo are adjustable in the menu.
-DJI remotes start from a DJI layout guess, but run the wizard anyway: stick layouts differ between firmwares.
+DJI remotes start from a DJI layout guess; run the wizard if the sticks feel off (layouts differ between firmwares).
 The OSD shows `RC` when the controller is flying, and a DVR-style stick overlay so you can see your inputs.
 
 Keyboard is the fallback: keys ramp in and out like a stick, and the **Rates** slider scales yaw and throttle.

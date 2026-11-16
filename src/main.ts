@@ -553,12 +553,8 @@ requestAnimationFrame(padUiTick);
 window.addEventListener('gamepadconnected', (e) => {
   padUiId = null; syncPadUi();
   const id = (e as GamepadEvent).gamepad.id;
-  // Unknown controller: stick layouts differ a lot between vendors, so walk the player through calibration first.
-  if (!loadMap(id)?.calibrated) {
-    hud.toast('NEW CONTROLLER · LET\'S MAP YOUR STICKS', 3000);
-    if (menu.classList.contains('hidden')) openMenu();
-    setTimeout(startCalibration, 300);
-  } else hud.toast('CONTROLLER CONNECTED');
+  // Calibration is opt-in (menu → Controller → Calibrate sticks): never interrupt a flight or a page load with it.
+  hud.toast(loadMap(id)?.calibrated ? 'CONTROLLER CONNECTED' : 'CONTROLLER CONNECTED · CALIBRATE IN MENU IF STICKS FEEL OFF', 3200);
 });
 window.addEventListener('gamepaddisconnected', () => { padUiId = null; syncPadUi(); });
 
